@@ -53,27 +53,13 @@ function nl_algebraic_sys!(F, α_μ; st, Exp_Index, Temp, Yin, Y_cat, k, Ncat_ce
 end
 
 
-function compute_rbs_coeffs_opt!(k; st, Temp, yin, Y_snap, Ncat_cells, nreacs, Nexp=3, ei, mixture_density, molar_weights) #TODO Add All reaction parameters as a struct 
-    Y_cat = Y_snap[1]
-    Yin = yin[:, ei] .* mixture_density ./ molar_weights
-
-    function f_α(α)
-        α = reshape(α, nreacs, Ncat_cells)
-        return sum(((α[i, j] - rf(Yin .+ sum(α[l, m] .* Y_cat[1, m][:, j] .* st[l, :] for l in 1:nreacs for m in 1:Ncat_cells), k; T=Temp[ei], density=mixture_density, molar_weights=molar_weights, RBS=true)[i])^2) for i in 1:nreacs for j in 1:Ncat_cells)[1]
-    end
-    α0 = zeros(nreacs * Ncat_cells)
-    res=Optim.optimize(f_α, α0, LBFGS(), Optim.Options(show_trace=false, extended_trace=false, f_abstol=1.0e-15))
-    α=res.minimizer
-    α = reshape(α, nreacs, Ncat_cells)
-    return α
-end
 
 function compute_rbs_coeffs!(k; st, Temp, yin, Y_snap, Ncat_cells, nreacs, Nexp=3, ei, mixture_density, molar_weights) #TODO Add All reaction parameters as a struct 
     #import snapshots for every basis element if they do not change in every experiment 
     Y_cat = Y_snap[1] #Block Matrix of Snapshot for Y_cat
     α0 = zeros(nreacs * Ncat_cells)
     Yin = yin[:, ei] .* mixture_density ./ molar_weights
-    Root = nlsolve((F, α_μ) -> nl_algebraic_sys!(F, α_μ; st=st, nreacs=nreacs, mixture_density=mixture_density, molar_weights=molar_weights, Exp_Index=ei, Temp=Temp[ei], Yin=Yin, Y_cat=Y_cat, k=k, Ncat_cells=Ncat_cells), α0, iterations=2000, autodiff=:central, ftol=1e-15, show_trace=false, extended_trace=false, factor=0.2, method=:trust_region) #ftol=1e-15, 
+    Root = nlsolve((F, α_μ) -> nl_algebraic_sys!(F, α_μ; st=st, nreacs=nreacs, mixture_density=mixture_density, molar_weights=molar_weights, Exp_Index=ei, Temp=Temp[ei], Yin=Yin, Y_cat=Y_cat, k=k, Ncat_cells=Ncat_cells), α0, iterations=2000, ftol=1e-15, show_trace=false, extended_trace=false, factor=0.5, method=:trust_region) #ftol=1e-15, autodiff=:central, 
     α = reshape(Root.zero, nreacs, Ncat_cells)
     return α #returns the vector Y_out_mean mass fractions
 end
@@ -97,7 +83,7 @@ function compute_srom_coeffs!(k; st, Temp, yin, b, Y_snap, Ncat_cells, nreacs, N
     Y_cat = Y_snap#[1]
     α0 = zeros(nreacs)
     Yin = yin[:, ei] .* mixture_density ./ molar_weights
-    Root = nlsolve((F, α_μ) -> nl_algebraic_sys_srom!(F, α_μ; st=st, b=b, nreacs=nreacs, mixture_density=mixture_density, molar_weights=molar_weights, Temp=Temp[ei], Yin=Yin, Y_cat=Y_cat, k=k, Ncat_cells=Ncat_cells), α0, iterations=10000, autodiff=:forward, ftol=1e-15, show_trace=false, extended_trace=false, factor=1.0, method=:trust_region) #ftol=1e-15, 
+    Root = nlsolve((F, α_μ) -> nl_algebraic_sys_srom!(F, α_μ; st=st, b=b, nreacs=nreacs, mixture_density=mixture_density, molar_weights=molar_weights, Temp=Temp[ei], Yin=Yin, Y_cat=Y_cat, k=k, Ncat_cells=Ncat_cells), α0, iterations=10000, ftol=1e-15, show_trace=false, extended_trace=false, factor=1.0, method=:trust_region) #ftol=1e-15, 
     return Root.zero
 end
 
