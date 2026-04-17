@@ -12,9 +12,9 @@ using Statistics
 using Distributions
 using QuasiMonteCarlo
 using DelimitedFiles
-using AMGCLWrap
-using AlgebraicMultigrid
-using GridVisualize
+#using AMGCLWrap
+#using AlgebraicMultigrid
+#using GridVisualize
 #using Plots
 #using CairoMakie
 using inverse_problem_RBS_CFD_het_cat
@@ -279,6 +279,9 @@ end
 function Inverse_Problem_Paras(; nref=2500, ratio=0.01, nspec=0, T=493, inlet_MFs=0.0, St=St) #TODO should go in source files 
     d = main(nref=nref, RBS=true, ratio=ratio, inlet_MFs=inlet_MFs, T=T, St=St)
     #a = yout_weighted(d)
+    println(size(d[1]))
+    println(St)
+    println(size(St))
     #b=ycat_weighted(d)
     snapshot_A = []
     snapshot_B = []
@@ -339,6 +342,8 @@ function experiments(; Y_in, Temp, P_total, Nexps, ratio, N_repeats, std_data, N
 end
 
 function parameter_estimator(; ratio, nspec, Y_in, Temp, P_total, St, nref=2500, nreac, Nexps, Y_out, unknown_parameters, IG, N_repeats, σ_data, RBS_full=false)
+    @show typeof(IG)
+    @show typeof(Y_out)
     single_snapshot_A = []
     single_snapshot_B = []
     rbs_snapshot = []
