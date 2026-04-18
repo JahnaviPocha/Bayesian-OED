@@ -12,7 +12,7 @@ from call_to_KPE_code import experiments, parameter_estimator
 # ============================================================
 # TEST SETTINGS
 # ============================================================
-
+ #PyArray{Float64, 2, true, false, Float64}
 NSPEC = 3
 NEXPS = 2
 N_REPEATS = 5
@@ -68,7 +68,7 @@ print("Yexp shape before:", Yexp.shape)
 St=[[-2, -1, 2]]
 St_t = np.array(St)
 
-IG=[[0.1, 0.1]]
+IG=[0.1, 0.1]
 IG_t = np.array(IG)
 
 params = parameter_estimator(

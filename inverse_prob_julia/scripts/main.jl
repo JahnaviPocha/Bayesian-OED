@@ -278,11 +278,6 @@ end
 
 function Inverse_Problem_Paras(; nref=2500, ratio=0.01, nspec=0, T=493, inlet_MFs=0.0, St=St) #TODO should go in source files 
     d = main(nref=nref, RBS=true, ratio=ratio, inlet_MFs=inlet_MFs, T=T, St=St)
-    #a = yout_weighted(d)
-    println(size(d[1]))
-    println(St)
-    println(size(St))
-    #b=ycat_weighted(d)
     snapshot_A = []
     snapshot_B = []
     for i in 1:nspec

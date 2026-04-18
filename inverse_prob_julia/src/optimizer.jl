@@ -49,6 +49,8 @@ function newton_optimizer(single_snapshot_A, single_snapshot_B, yin, Yexp; molar
 
     r = y_mean #./ a
 
+    @show typeof(y_mean)
+
     f_srbs_tr(k) = sum((transpose(G[:, i] - vcat(rf((yin[:, i] ./ molar_weights .* (mixture_density[i]) .+ B[i] * G[:, i]), k; T=T[i], density=mixture_density[i], molar_weights=molar_weights, RBS=true)...)) * W_dash[i] * (G[:, i] - vcat(rf((yin[:, i] ./ molar_weights .* (mixture_density[i]) .+ B[i] * G[:, i]), k; T=T[i], density=mixture_density[i], molar_weights=molar_weights, RBS=true)...))) for i in 1:Nexps)
     # #Single RBS Based function  for pressure based Reactions
     f_srbs(k) = (sum(transpose((r[:, i] ./ molar_weights .* (mixture_density[i]) - sum(st[j, :] .* ((rf(((yin[:, i] .+ r[:, i] .* b) ./ molar_weights .* (mixture_density[i])), k; T=T[i], density=mixture_density[i], molar_weights=molar_weights, RBS=true))[j]) for j in 1:NReactions))) * W_srbs * ((r[:, i] ./ molar_weights .* (mixture_density[i]) - sum(st[j, :] .* ((rf(((yin[:, i] .+ r[:, i] .* b) ./ molar_weights .* (mixture_density[i])), k; T=T[i], density=mixture_density[i], molar_weights=molar_weights, RBS=true))[j]) for j in 1:NReactions))) for i in 1:Nexps))
@@ -56,6 +58,7 @@ function newton_optimizer(single_snapshot_A, single_snapshot_B, yin, Yexp; molar
     #Single RBS Based function  for Reactions not requiring Pressure Conversion  
     #f_srbs(k) = (sum(transpose((r[:, i] - sum(st[j, :] .* ((rf(((yin[:, i] .+ r[:, i] .* b)), k; T=T[i], density=mixture_density[i], molar_weights=molar_weights, RBS=true))[j]) for j in 1:NReactions))) * W_srbs * ((r[:, i] - sum(st[j, :] .* ((rf(((yin[:, i] .+ r[:, i] .* b)), k; T=T[i], density=mixture_density[i], molar_weights=molar_weights, RBS=true))[j]) for j in 1:NReactions))) for i in 1:Nexps))
     #Singe RBS using Forward Looping #Need to adjust ths later on 
+    #f_srbs_fwd(k) = k[1]^2 + k[2]^2 - 2#sum(transpose(y_mean[:, i])*(y_mean[:, i]) for i in 1:Nexps)
     f_srbs_fwd(k) = sum(transpose(y_mean[:, i] - y_model_srom(k; st=st, a=a, b=b, nreacs=NReactions, mixture_density=mixture_density[i], molar_weights=molar_weights, Temp=T, Yin=yin, Exp_Index=i, Y_snap=B_RBS, Ncat_cells=Ncat_cells, Nexp=Nexps)) * W * (y_mean[:, i] - y_model_srom(k; st=st, a=a, b=b, nreacs=NReactions, mixture_density=mixture_density[i], molar_weights=molar_weights, Temp=T, Yin=yin, Exp_Index=i, Y_snap=B_RBS, Ncat_cells=Ncat_cells, Nexp=Nexps)) for i in 1:Nexps)[1]
 
     #RBS_Based function    
@@ -78,11 +81,11 @@ function newton_optimizer(single_snapshot_A, single_snapshot_B, yin, Yexp; molar
         iter = 500
     end
 
-    k0 = Initial_Guess#[4020.0, 3900.0]#ones(dof)
+    k0 = collect(Initial_Guess)#[4020.0, 3900.0]#ones(dof)
     # par, _ = levenberg_marquardt_nested(f, k0; T=T, y_mean=y_mean, yin=yin, Y_snap=B_RBS, Nexp=Nexps, Ncat_cells=Ncat_cells, λ=10.0, tol=1e-10, max_iter=10000, method="autodiff", hessian_approx=true)
     if lm == true #LBFGS(; m = 1, linesearch = LineSearches.HagerZhang())
 
-        @info "Evaluating using Newton with NelderMead"
+        @info "Evaluating using Newton with LBFGS"
         if RBS != true
             lower = fill(0.0, 2)#[1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-6, -1e6]#
             upper = fill(Inf, 2)#[1e6, 1e6, 1e6, 1e6, 1e6, 1e6, 1e6, 1e6, -1e-6]#fill(1e6, 8)
