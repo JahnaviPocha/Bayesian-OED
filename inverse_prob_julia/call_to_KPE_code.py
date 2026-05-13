@@ -4,7 +4,7 @@ jlPkg.instantiate()
 #jlPkg.add("PythonCall") 
 #jlPkg.add("LaTeXStrings")
 from juliacall import Main as jl
-jl.include("scripts/main.jl")
+jl.include("scripts/main.jl") # do main_meoh.jl here for methanol kinetics
 rpg=jl.Example_Inverse_Problem_Validation_2D.random_points_generator
 experiments=jl.Example_Inverse_Problem_Validation_2D.experiments
 parameter_estimator=jl.Example_Inverse_Problem_Validation_2D.parameter_estimator

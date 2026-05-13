@@ -68,16 +68,12 @@ function newton_optimizer(single_snapshot_A, single_snapshot_B, yin, Yexp; molar
     if RBS == true
         f = f_rbs
         tol = 1e-8
-        #solver = LBFGS(m=12)
-        iter = 1000
     elseif Fwd == true
         f = f_srbs_fwd
         tol = 1e-8
-        iter = 1000
     else
         f = f_srbs_tr
         tol = 1e-10
-        #solver = NelderMead()# BFGS()
         iter = 500
     end
 
@@ -87,10 +83,18 @@ function newton_optimizer(single_snapshot_A, single_snapshot_B, yin, Yexp; molar
 
         @info "Evaluating using Newton with LBFGS"
         if RBS != true
-            lower = fill(0.0, 2)#[1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-6, -1e6]#
-            upper = fill(Inf, 2)#[1e6, 1e6, 1e6, 1e6, 1e6, 1e6, 1e6, 1e6, -1e-6]#fill(1e6, 8)
-            inner_optimizer = LBFGS()#  outer_g_tol=tol, g_abstol=tol, g_tol=tol,
-            res = optimize(f, lower, upper, k0, Fminbox(inner_optimizer), Optim.Options(iterations=iter, outer_iterations=50, outer_g_tol=1e-8, x_abstol=1e-6, store_trace=false, show_trace=true, extended_trace=false))
+            if dof > 2
+                lower = fill(0.0, dof)
+                upper = fill(1.0, dof)
+                inner_optimizer = NelderMead()
+                 iter = 10
+            else
+                lower = fill(0.0, 2)
+                upper = fill(20000, 2)
+                inner_optimizer = LBFGS()
+                iter = 1000
+            end
+            res = optimize(f, lower, upper, k0, Fminbox(inner_optimizer), Optim.Options(iterations=iter, outer_iterations=50, store_trace=false, show_trace=true, extended_trace=false))
             #@show Optim.g_norm_trace(res)
             @show Optim.minimizer(res)
             @show Optim.minimum(res)
@@ -100,10 +104,18 @@ function newton_optimizer(single_snapshot_A, single_snapshot_B, yin, Yexp; molar
             @show Optim.g_converged(res)
             @show Optim.converged(res)
         else
-            lower = fill(0.0, 2)#[1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-6, 1e-6, -1e6]#
-            upper = fill(Inf, 2)#[1e6, 1e6, 1e6, 1e6, 1e6, 1e6, 1e6, 1e6, -1e-6]#fill(1e6, 8)
-            inner_optimizer = LBFGS()#  outer_g_tol=tol, g_abstol=tol, g_tol=tol,
-            res = optimize(f, lower, upper, k0, Fminbox(inner_optimizer), Optim.Options(iterations=iter, outer_iterations=50, x_abstol=1e-5, g_abstol=1e-5, store_trace=false, show_trace=true, extended_trace=false))
+            if dof > 2
+                lower = fill(0.0, dof)
+                upper = fill(1.0, dof)
+                inner_optimizer = NelderMead()
+                iter = 10
+            else
+                lower = fill(0.0, 2)
+                upper = fill(20000, 2)
+                inner_optimizer = LBFGS()
+                iter = 1000
+            end
+            res = optimize(f, lower, upper, k0, Fminbox(inner_optimizer), Optim.Options(iterations=iter, outer_iterations=50, store_trace=false, show_trace=true, extended_trace=false))
             # @show Optim.g_norm_trace(res)
             @show Optim.iterations(res)
             @show Optim.x_converged(res)
