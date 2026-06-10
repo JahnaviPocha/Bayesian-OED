@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Apr  6 09:26:47 2026
+Created on Sun Apr 26 11:02:33 2026
 
 @author: jahna
 """
+
 
 # ============================================================
 # PART 1 — DESIGN SPACE + JULIA INTERFACE (GENERALIZED)
@@ -89,7 +90,7 @@ def decode_design_vector(x):
 # EXPERIMENT WRAPPER (CRITICAL)
 # ============================================================
 
-def run_experiment(x):
+def run_experiment(x, noise_level):
     """
     Runs ONE experiment via Julia CFD model
 
@@ -117,7 +118,7 @@ def run_experiment(x):
         Nexps=1,
         ratio=RATIO,
         N_repeats=N_REPEATS,
-        std_data=STD_DATA,
+        std_data=noise_level,
         Nspec=NSPEC,
         k_true=TRUE_K
     )
@@ -386,6 +387,7 @@ def check_parameter_convergence(param_history, tol=1e-3):
 # ============================================================
 
 def bayesian_optimization(
+    noise_level,    
     N_init=3,
     max_experiments=10,
     tol=1e-3
@@ -412,7 +414,7 @@ def bayesian_optimization(
     print("Running initial experiments...\n")
 
     for i, x in enumerate(X):
-        y_scalar, Yexp = run_experiment(x)
+        y_scalar, Yexp = run_experiment(x, noise_level)
 
         y_list.append(y_scalar)
         Y_tensor_list.append(Yexp)
@@ -448,7 +450,7 @@ def bayesian_optimization(
         x_next = select_next_experiment(gp, X, y)
 
         # 3.3 Run experiment (Julia CFD)
-        y_next, Yexp_next = run_experiment(x_next)
+        y_next, Yexp_next = run_experiment(x_next, noise_level)
 
         print(f"New experiment:")
         print(f"  x = {x_next}")
@@ -510,64 +512,76 @@ def summarize_results(X, y, param_history):
 # PLOT 1 — EXPERIMENT DISTRIBUTION
 # ============================================================
 
-def plot_experiments(X):
+def plot_experiments(all_results):
     plt.figure()
 
-    # plot first species vs temperature
-    plt.scatter(X[:, 0], X[:, -1], c=np.arange(len(X)), s=80)
+    for result in all_results:
+        X = result["X"]
+        plt.scatter(X[:, 0], X[:, -1],
+                    label=f"noise={result['noise']}")
 
-    plt.colorbar(label="Experiment order")
-    plt.xlabel("Y1 (species 1)")
-    plt.ylabel("Temperature (K)")
-    plt.title("Experimental Design (BOED)")
+    plt.xlabel("Y1")
+    plt.ylabel("Temperature")
+    plt.title("Design Points for Different Noise Levels")
+    plt.legend()
     plt.grid(True)
-
     plt.show()
-
 
 # ============================================================
 # PLOT 2 — PARAMETER CONVERGENCE
 # ============================================================
 
-def plot_parameter_convergence(param_history):
-    params = np.array(param_history)
-    exp_numbers = np.arange(1, len(params) + 1)
-
-    # k1
+def plot_parameter_convergence(all_results):
     plt.figure()
-    plt.plot(exp_numbers, params[:, 0], marker='o')
+
+    for result in all_results:
+        params = np.array(result["params"])
+        exp_numbers = np.arange(1, len(params) + 1)
+
+        plt.plot(exp_numbers, params[:, 0], marker='o',
+                 label=f"k1 (noise={result['noise']})")
+
     plt.xlabel("Experiment number")
     plt.ylabel("k1")
-    plt.title("Parameter Convergence: k1")
+    plt.title("Parameter Convergence (k1)")
+    plt.legend()
     plt.grid(True)
     plt.show()
 
-    # k2
+    # ---- k2 ----
     plt.figure()
-    plt.plot(exp_numbers, params[:, 1], marker='s')
+
+    for result in all_results:
+        params = np.array(result["params"])
+        exp_numbers = np.arange(1, len(params) + 1)
+
+        plt.plot(exp_numbers, params[:, 1], marker='s',
+                 label=f"k2 (noise={result['noise']})")
+
     plt.xlabel("Experiment number")
     plt.ylabel("k2")
-    plt.title("Parameter Convergence: k2")
+    plt.title("Parameter Convergence (k2)")
+    plt.legend()
     plt.grid(True)
     plt.show()
-
 
 # ============================================================
 # PLOT 3 — METHANOL EVOLUTION
 # ============================================================
 
-def plot_methanol(y):
+def plot_methanol(all_results):
     plt.figure()
 
-    plt.plot(y, marker='o')
+    for result in all_results:
+        plt.plot(result["y"], marker='o',
+                 label=f"noise={result['noise']}")
 
     plt.xlabel("Experiment number")
     plt.ylabel("Methanol fraction")
-    plt.title("Methanol Production Across Experiments")
-
+    plt.title("Methanol Evolution (Noise Comparison)")
+    plt.legend()
     plt.grid(True)
     plt.show()
-
 
 # ============================================================
 # MAIN DRIVER (RUN EVERYTHING)
@@ -575,17 +589,29 @@ def plot_methanol(y):
 
 if __name__ == "__main__":
 
-    # Run BOED
-    X, y, Y_full, param_history = bayesian_optimization(
-        N_init=3,
-        max_experiments=8,
-        tol=1e-3
-    )
+    NOISE_LEVELS = [1e-6, 1e-5, 1e-4]
 
-    # Summary
-    final_params = summarize_results(X, y, param_history)
+    all_results = []
 
-    # Plots
-    plot_experiments(X)
-    plot_parameter_convergence(param_history)
-    plot_methanol(y)
+    for noise in NOISE_LEVELS:
+        print(f"\n\n===== RUNNING FOR NOISE = {noise} =====")
+
+        X, y, Y_full, param_history = bayesian_optimization(
+            noise_level=noise,
+            N_init=3,
+            max_experiments=8,
+            tol=1e-3
+        )
+
+        all_results.append({
+            "noise": noise,
+            "X": X,
+            "y": y,
+            "params": param_history
+        })
+        
+        
+        plot_experiments(all_results)
+        plot_parameter_convergence(all_results)
+        plot_methanol(all_results) 
+        

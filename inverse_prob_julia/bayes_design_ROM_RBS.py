@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Apr  6 09:26:47 2026
+Created on Mon Jun  8 15:05:59 2026
 
 @author: jahna
 """
+
 
 # ============================================================
 # PART 1 — DESIGN SPACE + JULIA INTERFACE (GENERALIZED)
@@ -35,7 +36,7 @@ Y_BOUNDS = [(0.1, 0.5) for _ in range(NSPEC - 1)]
 TEMP_BOUNDS = (300.0, 600.0)
 
 # Target species index (0-based Python indexing)
-# For methanol (3rd species)
+# For output (3rd species)
 TARGET_SPECIES_INDEX = 2
 
 # True kinetic parameters (used in experiments)
@@ -121,11 +122,14 @@ def run_experiment(x):
         Nspec=NSPEC,
         k_true=TRUE_K
     )
+    
+    print("Yexp type:", type(Yexp))
+    print("Yexp shape:", np.array(Yexp).shape)
 
     # Average over repeats
     Y_mean = np.mean(Yexp, axis=0)[:, 0]
 
-    # Select target species (methanol)
+    # Select target species (output)
     y_scalar = Y_mean[TARGET_SPECIES_INDEX]
 
     return y_scalar, Yexp
@@ -185,11 +189,16 @@ def estimate_parameters(X, Y_outputs):
         Nexps=Nexps,
         Y_out=Y_out,
         unknown_parameters=2,
-        IG=np.array([0.1, 0.1]),
+        IG=np.array([1000.0, 1000.0]),
         N_repeats=N_REPEATS,
         σ_data=STD_DATA,
-        RBS_full=False
+        RBS_full=True
     )
+    
+    
+    print("params type:", type(params))
+    print("params value:", np.array(params))
+    print("params shape:", np.array(params).shape)
 
     return np.array(params)
 
@@ -302,7 +311,7 @@ def expected_improvement(X_candidates, gp, y_best, xi=0.01):
     mu = mu.reshape(-1, 1)
 
     with np.errstate(divide='warn'):
-        improvement = mu - y_best - xi   # maximize methanol
+        improvement = mu - y_best - xi   # maximize output
         Z = improvement / sigma
 
         ei = improvement * norm.cdf(Z) + sigma * norm.pdf(Z)
@@ -315,7 +324,7 @@ def expected_improvement(X_candidates, gp, y_best, xi=0.01):
 # GENERATE CANDIDATE POINTS
 # ============================================================
 
-def generate_candidates(n_candidates=500):
+def generate_candidates(n_candidates=50):
     """
     Random candidate sampling in design space
     """
@@ -344,14 +353,14 @@ def generate_candidates(n_candidates=500):
 # SELECT NEXT EXPERIMENT
 # ============================================================
 
-def select_next_experiment(gp, X, y, n_candidates=500):
+def select_next_experiment(gp, X, y, n_candidates=50):
     """
     Choose next experiment using EI
     """
 
     X_candidates = generate_candidates(n_candidates)
 
-    y_best = np.max(y)   # maximizing methanol
+    y_best = np.max(y)   # maximizing output
 
     ei = expected_improvement(X_candidates, gp, y_best)
 
@@ -502,7 +511,7 @@ def summarize_results(X, y, param_history):
     print("\nBest experiment (max methanol):")
     print(f"  X = {X[best_idx]}")
     print(f"  Methanol = {y[best_idx]:.6f}")
-
+    
     return final_params
 
 
@@ -553,7 +562,7 @@ def plot_parameter_convergence(param_history):
 
 
 # ============================================================
-# PLOT 3 — METHANOL EVOLUTION
+# PLOT 3 — OUTPUT EVOLUTION
 # ============================================================
 
 def plot_methanol(y):
@@ -562,8 +571,8 @@ def plot_methanol(y):
     plt.plot(y, marker='o')
 
     plt.xlabel("Experiment number")
-    plt.ylabel("Methanol fraction")
-    plt.title("Methanol Production Across Experiments")
+    plt.ylabel("output fraction")
+    plt.title("output Production Across Experiments")
 
     plt.grid(True)
     plt.show()
