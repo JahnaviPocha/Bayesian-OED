@@ -327,8 +327,8 @@ def estimate_parameters_from_design(X):
 # PART 9 — BO LOOP (CORE)
 # ============================================================
 def BO(
-        N_init=4,
-        N_iter=8
+        N_init=3,
+        N_iter=10
 ):
 
     X = generate_candidates(N_init)
@@ -412,8 +412,8 @@ def run_noise_study():
         N_REPEATS = noise
 
         X,y,hist,param_hist = BO(
-            N_init=4,
-            N_iter=4
+            N_init=3,
+            N_iter=10
         )
 
         results[noise] = {

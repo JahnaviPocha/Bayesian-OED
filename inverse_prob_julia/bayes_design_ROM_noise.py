@@ -5,6 +5,7 @@ Created on Tue Apr 21 18:41:12 2026
 @author: jahna
 """
 
+
 # ============================================================
 # PART 1 — DESIGN SPACE + JULIA INTERFACE (GENERALIZED)
 # ============================================================
@@ -35,7 +36,7 @@ Y_BOUNDS = [(0.1, 0.5) for _ in range(NSPEC - 1)]
 TEMP_BOUNDS = (300.0, 600.0)
 
 # Target species index (0-based Python indexing)
-# For methanol (3rd species)
+# For output (3rd species)
 TARGET_SPECIES_INDEX = 2
 
 # True kinetic parameters (used in experiments)
@@ -121,11 +122,14 @@ def run_experiment(x, noise_level):
         Nspec=NSPEC,
         k_true=TRUE_K
     )
+    
+    print("Yexp type:", type(Yexp))
+    print("Yexp shape:", np.array(Yexp).shape)
 
     # Average over repeats
     Y_mean = np.mean(Yexp, axis=0)[:, 0]
 
-    # Select target species (methanol)
+    # Select target species (output)
     y_scalar = Y_mean[TARGET_SPECIES_INDEX]
 
     return y_scalar, Yexp
@@ -137,7 +141,7 @@ def run_experiment(x, noise_level):
 
 #from juliacall import Main as jl
 
-def estimate_parameters(X, Y_outputs):
+def estimate_parameters(X, Y_outputs, noise_level):
     """
     Calls Julia parameter estimator (FINAL CORRECT VERSION)
     """
@@ -185,11 +189,16 @@ def estimate_parameters(X, Y_outputs):
         Nexps=Nexps,
         Y_out=Y_out,
         unknown_parameters=2,
-        IG=np.array([0.1, 0.1]),
+        IG=np.array([1000.0, 1000.0]),
         N_repeats=N_REPEATS,
-        σ_data=STD_DATA,
-        RBS_full=False
+        σ_data=noise_level,
+        RBS_full=True
     )
+    
+    
+    print("params type:", type(params))
+    print("params value:", np.array(params))
+    print("params shape:", np.array(params).shape)
 
     return np.array(params)
 
@@ -302,7 +311,7 @@ def expected_improvement(X_candidates, gp, y_best, xi=0.01):
     mu = mu.reshape(-1, 1)
 
     with np.errstate(divide='warn'):
-        improvement = mu - y_best - xi   # maximize methanol
+        improvement = mu - y_best - xi   # maximize output
         Z = improvement / sigma
 
         ei = improvement * norm.cdf(Z) + sigma * norm.pdf(Z)
@@ -315,7 +324,7 @@ def expected_improvement(X_candidates, gp, y_best, xi=0.01):
 # GENERATE CANDIDATE POINTS
 # ============================================================
 
-def generate_candidates(n_candidates=500):
+def generate_candidates(n_candidates=50):
     """
     Random candidate sampling in design space
     """
@@ -344,14 +353,14 @@ def generate_candidates(n_candidates=500):
 # SELECT NEXT EXPERIMENT
 # ============================================================
 
-def select_next_experiment(gp, X, y, n_candidates=500):
+def select_next_experiment(gp, X, y, n_candidates=50):
     """
     Choose next experiment using EI
     """
 
     X_candidates = generate_candidates(n_candidates)
 
-    y_best = np.max(y)   # maximizing methanol
+    y_best = np.max(y)   # maximizing output
 
     ei = expected_improvement(X_candidates, gp, y_best)
 
@@ -429,7 +438,7 @@ def bayesian_optimization(
 
     print("\nInitial parameter estimation...\n")
 
-    params = estimate_parameters(X, Y_full)
+    params = estimate_parameters(X, Y_full, noise_level)
     param_history = [params]
 
     print(f"Initial parameters: {params}")
@@ -461,7 +470,7 @@ def bayesian_optimization(
         Y_full = np.concatenate((Y_full, Yexp_next), axis=2)
 
         # 3.5 Parameter estimation
-        params = estimate_parameters(X, Y_full)
+        params = estimate_parameters(X, Y_full, noise_level)
         param_history.append(params)
 
         print(f"Estimated parameters: {params}")
@@ -503,7 +512,7 @@ def summarize_results(X, y, param_history):
     print("\nBest experiment (max methanol):")
     print(f"  X = {X[best_idx]}")
     print(f"  Methanol = {y[best_idx]:.6f}")
-
+    
     return final_params
 
 
@@ -511,76 +520,64 @@ def summarize_results(X, y, param_history):
 # PLOT 1 — EXPERIMENT DISTRIBUTION
 # ============================================================
 
-def plot_experiments(all_results):
+def plot_experiments(X):
     plt.figure()
 
-    for result in all_results:
-        X = result["X"]
-        plt.scatter(X[:, 0], X[:, -1],
-                    label=f"noise={result['noise']}")
+    # plot first species vs temperature
+    plt.scatter(X[:, 0], X[:, -1], c=np.arange(len(X)), s=80)
 
-    plt.xlabel("Y1")
-    plt.ylabel("Temperature")
-    plt.title("Design Points for Different Noise Levels")
-    plt.legend()
+    plt.colorbar(label="Experiment order")
+    plt.xlabel("Y1 (species 1)")
+    plt.ylabel("Temperature (K)")
+    plt.title("Experimental Design (BOED)")
     plt.grid(True)
+
     plt.show()
+
 
 # ============================================================
 # PLOT 2 — PARAMETER CONVERGENCE
 # ============================================================
 
-def plot_parameter_convergence(all_results):
+def plot_parameter_convergence(param_history):
+    params = np.array(param_history)
+    exp_numbers = np.arange(1, len(params) + 1)
+
+    # k1
     plt.figure()
-
-    for result in all_results:
-        params = np.array(result["params"])
-        exp_numbers = np.arange(1, len(params) + 1)
-
-        plt.plot(exp_numbers, params[:, 0], marker='o',
-                 label=f"k1 (noise={result['noise']})")
-
+    plt.plot(exp_numbers, params[:, 0], marker='o')
     plt.xlabel("Experiment number")
     plt.ylabel("k1")
-    plt.title("Parameter Convergence (k1)")
-    plt.legend()
+    plt.title("Parameter Convergence: k1")
     plt.grid(True)
     plt.show()
 
-    # ---- k2 ----
+    # k2
     plt.figure()
-
-    for result in all_results:
-        params = np.array(result["params"])
-        exp_numbers = np.arange(1, len(params) + 1)
-
-        plt.plot(exp_numbers, params[:, 1], marker='s',
-                 label=f"k2 (noise={result['noise']})")
-
+    plt.plot(exp_numbers, params[:, 1], marker='s')
     plt.xlabel("Experiment number")
     plt.ylabel("k2")
-    plt.title("Parameter Convergence (k2)")
-    plt.legend()
+    plt.title("Parameter Convergence: k2")
     plt.grid(True)
     plt.show()
 
+
 # ============================================================
-# PLOT 3 — METHANOL EVOLUTION
+# PLOT 3 — OUTPUT EVOLUTION
 # ============================================================
 
-def plot_methanol(all_results):
+def plot_methanol(y):
     plt.figure()
 
-    for result in all_results:
-        plt.plot(result["y"], marker='o',
-                 label=f"noise={result['noise']}")
+    plt.plot(y, marker='o')
 
     plt.xlabel("Experiment number")
-    plt.ylabel("Methanol fraction")
-    plt.title("Methanol Evolution (Noise Comparison)")
-    plt.legend()
+    plt.ylabel("output fraction")
+    plt.title("output Production Across Experiments")
+
     plt.grid(True)
     plt.show()
+
 
 # ============================================================
 # MAIN DRIVER (RUN EVERYTHING)
@@ -588,12 +585,16 @@ def plot_methanol(all_results):
 
 if __name__ == "__main__":
 
-    NOISE_LEVELS = [1e-6, 1e-5, 1e-4]
+    NOISE_LEVELS = [1e-3, 1e-5, 1e-9, 1e-13]
 
     all_results = []
 
     for noise in NOISE_LEVELS:
-        print(f"\n\n===== RUNNING FOR NOISE = {noise} =====")
+
+        print("\n")
+        print("="*60)
+        print(f"RUNNING BOED FOR NOISE = {noise:.0e}")
+        print("="*60)
 
         X, y, Y_full, param_history = bayesian_optimization(
             noise_level=noise,
@@ -602,19 +603,21 @@ if __name__ == "__main__":
             tol=1e-3
         )
 
+        final_params = summarize_results(
+            X,
+            y,
+            param_history
+        )
+
         all_results.append({
             "noise": noise,
             "X": X,
             "y": y,
-            "params": param_history
+            "params": param_history,
+            "final_params": final_params
         })
-        
-        
-        plot_experiments(all_results)
-        plot_parameter_convergence(all_results)
-        plot_methanol(all_results) 
-        
-        
-        
-        
-       
+
+        # keep existing plots
+        plot_experiments(X)
+        plot_parameter_convergence(param_history)
+        plot_methanol(y)

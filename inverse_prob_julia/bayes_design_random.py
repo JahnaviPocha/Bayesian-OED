@@ -7,11 +7,15 @@ Created on Mon Jun  8 09:48:52 2026
 
 
 # ============================================================
-# PART 1 — IMPORTS + GLOBAL SETTINGS
+# PART 1 — DESIGN SPACE + JULIA INTERFACE (GENERALIZED)
 # ============================================================
 
 import numpy as np
 import matplotlib.pyplot as plt
+
+# ============================================================
+# IMPORT JULIA INTERFACE (your KPE bridge)
+# ============================================================
 
 from call_to_KPE_code import (
     rpg,
@@ -20,42 +24,58 @@ from call_to_KPE_code import (
 )
 
 # ============================================================
-# GLOBAL SETTINGS
+# GLOBAL SETTINGS (EASY TO MODIFY)
 # ============================================================
 
-NSPEC = 3
+NSPEC = 3   # number of species (change anytime)
+
+# Bounds from Julia main.jl
+# lb = [0.1, 0.1, 300]
+# ub = [0.5, 0.5, 600]
 
 Y_BOUNDS = [(0.1, 0.5) for _ in range(NSPEC - 1)]
 TEMP_BOUNDS = (300.0, 600.0)
 
+# Target species index (0-based Python indexing)
+# For output (3rd species)
 TARGET_SPECIES_INDEX = 2
 
-TRUE_K = np.array([4000.0, 4000.0])
+# True kinetic parameters (used in experiments)
+TRUE_K = [4000.0, 4000.0]
 
+# Fixed parameters (same as Julia)
 P_TOTAL = 50
 RATIO = 0.1
-STD_DATA = 1e-4
+STD_DATA = 1e-6
 N_REPEATS = 10
 
 
 # ============================================================
-# COMPLETE MASS FRACTION VECTOR
+# HELPER: COMPLETE MASS FRACTION VECTOR
 # ============================================================
 
 def complete_Y_in(Y_partial):
+    """
+    Convert partial species vector → full Y_in
+    Enforces sum(Y) = 1
+    """
     last = 1.0 - np.sum(Y_partial)
-
+    
+    # Safety check
     if last < 0:
         return None
-
+    
     return np.append(Y_partial, last)
 
 
 # ============================================================
-# DECODE DESIGN VECTOR
+# HELPER: CONVERT BO VECTOR → PHYSICAL INPUT
 # ============================================================
 
 def decode_design_vector(x):
+    """
+    x = [Y1, Y2, ..., Y(n-1), Temp]
+    """
     Y_partial = x[:-1]
     Temp = x[-1]
 
@@ -68,18 +88,30 @@ def decode_design_vector(x):
 
 
 # ============================================================
-# RUN ONE EXPERIMENT
+# EXPERIMENT WRAPPER (CRITICAL)
 # ============================================================
 
-def run_experiment(x):
+def run_experiment(x, noise_level):
+    """
+    Runs ONE experiment via Julia CFD model
+
+    Returns:
+    --------
+    y_scalar : float
+        target species output (for GP)
+    y_full   : full species output (for analysis)
+    """
+
     Y_in, Temp = decode_design_vector(x)
 
     if Y_in is None:
-        return 1e6, None
+        return 1e6, None  # penalize invalid region
 
+    # Reshape for Julia call
     Y_in = np.array(Y_in).reshape(NSPEC, 1)
     Temp = np.array([Temp])
 
+    # Run experiment
     Yexp = experiments(
         Y_in=Y_in,
         Temp=Temp,
@@ -87,13 +119,18 @@ def run_experiment(x):
         Nexps=1,
         ratio=RATIO,
         N_repeats=N_REPEATS,
-        std_data=STD_DATA,
+        std_data=noise_level,
         Nspec=NSPEC,
         k_true=TRUE_K
     )
+    
+    print("Yexp type:", type(Yexp))
+    print("Yexp shape:", np.array(Yexp).shape)
 
+    # Average over repeats
     Y_mean = np.mean(Yexp, axis=0)[:, 0]
 
+    # Select target species (output)
     y_scalar = Y_mean[TARGET_SPECIES_INDEX]
 
     return y_scalar, Yexp
@@ -103,28 +140,47 @@ def run_experiment(x):
 # PARAMETER ESTIMATION WRAPPER
 # ============================================================
 
-def estimate_parameters(X, Y_outputs, initial_guess=None):
+#from juliacall import Main as jl
+
+def estimate_parameters(X, Y_outputs, noise_level):
+    """
+    Calls Julia parameter estimator (FINAL CORRECT VERSION)
+    """
 
     Nexps = X.shape[0]
 
+    # ================================
+    # BUILD INPUTS
+    # ================================
     Y_in_all = []
     Temp_all = []
 
     for x in X:
         Y_in, Temp = decode_design_vector(x)
-        Y_in_all.append(Y_in)
+
+        # ✔ keep only independent variable (solver reality)
+        Y_in_all.append(Y_in)   # ✅ FIXED
         Temp_all.append(Temp)
 
-    Y_in_all = np.array(Y_in_all).T
-    Temp_all = np.array(Temp_all)
+    Y_in_all = np.array(Y_in_all).T        # (NSPEC, Nexps)
+    Temp_all = np.array(Temp_all)          # (Nexps,)
+
     Y_out = np.array(Y_outputs)
 
-    if initial_guess is None:
-        initial_guess = np.array([1000.0, 1000.0])
+    # ================================
+    # DEBUG (KEEP THIS)
+    # ================================
+    print("\nDEBUG (FINAL FIX):")
+    print("Y_in:", Y_in_all.shape)          # (1, Nexps)
+    print("Temp:", Temp_all.shape)          # (Nexps,)
+    print("Y_out:", Y_out.shape)    # (1, Nexps, N_repeats)
 
+    # ================================
+    # CALL JULIA
+    # ================================
     params = parameter_estimator(
         ratio=RATIO,
-        nspec=NSPEC,
+        nspec=NSPEC,        # ✔ keep 3 (chemistry)
         Y_in=Y_in_all,
         Temp=Temp_all,
         P_total=P_TOTAL,
@@ -134,27 +190,30 @@ def estimate_parameters(X, Y_outputs, initial_guess=None):
         Nexps=Nexps,
         Y_out=Y_out,
         unknown_parameters=2,
-        IG=initial_guess,
+        IG=np.array([1000.0, 1000.0]),
         N_repeats=N_REPEATS,
-        σ_data=STD_DATA,
+        σ_data=noise_level,
         RBS_full=True
     )
+    
+    
+    print("params type:", type(params))
+    print("params value:", np.array(params))
+    print("params shape:", np.array(params).shape)
 
     return np.array(params)
 
-
 # ============================================================
-# INITIAL DESIGN GENERATOR
+# RANDOM DESIGN LOOP
 # ============================================================
 
-def generate_initial_design(N_init=2):
 
-    X_init = np.array([
-    [0.1, 0.1, 300],
-    [0.5, 0.5, 600]
-])
+def generate_initial_design(N_init=8):
+
+    X_init = []
 
     while len(X_init) < N_init:
+
         Y_partial = [
             np.random.uniform(*Y_BOUNDS[i])
             for i in range(NSPEC - 1)
@@ -171,306 +230,180 @@ def generate_initial_design(N_init=2):
 
     return np.array(X_init)
 
-
 # ============================================================
-# CANDIDATE GENERATOR
-# ============================================================
-
-def generate_candidates(n_candidates=50):
-
-    candidates = []
-
-    while len(candidates) < n_candidates:
-        Y_partial = [
-            np.random.uniform(*Y_BOUNDS[i])
-            for i in range(NSPEC - 1)
-        ]
-
-        Temp = np.random.uniform(*TEMP_BOUNDS)
-
-        x = np.array(Y_partial + [Temp])
-
-        Y_full, _ = decode_design_vector(x)
-
-        if Y_full is not None:
-            candidates.append(x)
-
-    return np.array(candidates)
-
-
-# ============================================================
-# RANDOM DESIGN BASELINE
+# RANDOM DESIGN LOOP
 # ============================================================
 
-def random_design(
-    N_init=2,
-    max_experiments=12
+def random_design_study(
+    N_experiments=8
 ):
+    """
+    Pure random experimental design.
 
-    print("\n=== RANDOM DESIGN ===\n")
+    Same design space as BOED.
+    Same parameter estimator.
+    """
 
-    X = generate_initial_design(N_init)
+    print("\n=== RANDOM DESIGN STUDY ===\n")
+
+    # --------------------------------
+    # Generate random experiments
+    # --------------------------------
+
+    X = generate_initial_design(N_experiments)
 
     y_list = []
     Y_tensor_list = []
 
-    for x in X:
-        y_scalar, Yexp = run_experiment(x)
+    for i, x in enumerate(X):
+
+        print(f"\nExperiment {i+1}/{N_experiments}")
+
+        y_scalar, Yexp = run_experiment(
+            x,
+            noise_level=STD_DATA
+            )
 
         y_list.append(y_scalar)
         Y_tensor_list.append(Yexp)
 
+        print(f"Output = {y_scalar:.6f}")
+
     y = np.array(y_list)
-    Y_full = np.concatenate(Y_tensor_list, axis=2)
 
-    params = estimate_parameters(X, Y_full)
+    Y_full = np.concatenate(
+        Y_tensor_list,
+        axis=2
+    )
 
-    param_history = [params]
+    # --------------------------------
+    # Parameter estimation
+    # --------------------------------
 
-    for iteration in range(max_experiments - N_init):
+    print("\nEstimating parameters...\n")
 
-        print(f"\n--- RANDOM Iteration {iteration+1} ---")
+    params = estimate_parameters(
+        X,
+        Y_full,
+        noise_level=STD_DATA
+    )
 
-        x_next = generate_candidates(1)[0]
+    print("\nFinal estimated parameters:")
+    print(params)
 
-        y_next, Yexp_next = run_experiment(x_next)
-
-        X = np.vstack((X, x_next))
-        y = np.append(y, y_next)
-
-        Y_full = np.concatenate(
-            (Y_full, Yexp_next),
-            axis=2
-        )
-
-        params = estimate_parameters(
-            X,
-            Y_full,
-            initial_guess=params
-        )
-
-        param_history.append(params)
-
-    return X, y, Y_full, np.array(param_history)
+    return X, y, Y_full, params
 
 # ============================================================
-# PART 3 — RESULTS SUMMARY + VISUALIZATION
+# FINAL RESULTS SUMMARY
 # ============================================================
 
-# ============================================================
-# SUMMARY FUNCTION
-# ============================================================
+def summarize_results(X, y, params):
 
-def summarize_results(X, y, param_history):
     print("\n===== FINAL RESULTS SUMMARY =====\n")
 
     print(f"Total experiments used: {len(X)}")
 
-    final_params = param_history[-1]
-
     print("\nFinal estimated parameters:")
-    print(f"  k1 = {final_params[0]:.6f}")
-    print(f"  k2 = {final_params[1]:.6f}")
+    print(f"  k1 = {params[0]:.6f}")
+    print(f"  k2 = {params[1]:.6f}")
 
     best_idx = np.argmax(y)
 
-    print("\nBest experiment:")
+    print("\nBest experiment (max output):")
     print(f"  X = {X[best_idx]}")
-    print(f"  Target species output = {y[best_idx]:.6f}")
+    print(f"  Output = {y[best_idx]:.6f}")
 
-    return final_params
+    return params
+
+# ============================================================
+# PARAMETER ERROR FUNCTION
+# ============================================================
+
+
+
+def parameter_error(params):
+
+    true_params = np.array([4000.0, 4000.0])
+
+    error_percent = (
+        np.linalg.norm(params - true_params)
+        /
+        np.linalg.norm(true_params)
+    ) * 100
+
+    print(
+        f"\nRelative parameter error = "
+        f"{error_percent:.2f}%"
+    )
+
+    return error_percent
 
 
 # ============================================================
-# PLOT 1 — EXPERIMENT DISTRIBUTION
+# RANDOM DESIGN PLOT
 # ============================================================
 
-def plot_experiments(X):
-    plt.figure(figsize=(7, 5))
+
+def plot_random_design(X):
+
+    plt.figure()
 
     plt.scatter(
-        X[:, 0],
-        X[:, -1],
+        X[:,0],
+        X[:,-1],
         c=np.arange(len(X)),
         s=100
     )
 
-    plt.colorbar(label="Experiment order")
+    plt.colorbar(
+        label="Experiment Number"
+    )
+
     plt.xlabel("Y1")
-    plt.ylabel("Temperature (K)")
-    plt.title("BOED Experimental Design")
+    plt.ylabel("Temperature")
+
+    plt.title(
+        "Random Experimental Design"
+    )
+
     plt.grid(True)
-    plt.tight_layout()
     plt.show()
 
-
 # ============================================================
-# PLOT 2 — PARAMETER CONVERGENCE
-# ============================================================
-
-def plot_parameter_convergence(param_history):
-    params = np.array(param_history)
-    exp_numbers = np.arange(1, len(params) + 1)
-
-    plt.figure(figsize=(7, 4))
-    plt.plot(exp_numbers, params[:, 0], marker='o')
-    plt.xlabel("Iteration")
-    plt.ylabel("k1")
-    plt.title("Convergence of k1")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
-
-    plt.figure(figsize=(7, 4))
-    plt.plot(exp_numbers, params[:, 1], marker='s')
-    plt.xlabel("Iteration")
-    plt.ylabel("k2")
-    plt.title("Convergence of k2")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
-
-
-# ============================================================
-# PLOT 3 — TARGET SPECIES EVOLUTION
+# OUTPUT EVOLUTION PLOT
 # ============================================================
 
-def plot_target_species(y):
-    plt.figure(figsize=(7, 4))
+def plot_output(y):
+
+    plt.figure()
 
     plt.plot(y, marker='o')
 
-    plt.xlabel("Experiment number")
-    plt.ylabel("Target species output")
-    plt.title("Target Species Evolution")
-
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
-
-
-# ============================================================
-# PARAMETER ERROR
-# ============================================================
-
-def parameter_error(param_history):
-
-    err = []
-
-    for p in param_history:
-
-        rel_err = (
-            np.linalg.norm(p - TRUE_K)
-            / np.linalg.norm(TRUE_K)
-        )
-
-        err.append(100 * rel_err)
-
-    return np.array(err)
-
-
-
-# ============================================================
-# BOED vs RANDOM COMPARISON
-# ============================================================
-
-def compare_boed_vs_random(
-    param_hist_boed,
-    param_hist_random
-):
-
-    err_boed = parameter_error(param_hist_boed)
-    err_rand = parameter_error(param_hist_random)
-
-    plt.figure(figsize=(8,5))
-
-    plt.plot(
-        range(1,len(err_boed)+1),
-        err_boed,
-        marker='o',
-        linewidth=2,
-        label='BOED'
-    )
-
-    plt.plot(
-        range(1,len(err_rand)+1),
-        err_rand,
-        marker='s',
-        linewidth=2,
-        label='Random'
-    )
-
     plt.xlabel("Experiment Number")
-    plt.ylabel("Parameter Error (%)")
+    plt.ylabel("Output")
 
-    plt.title("BOED vs Random Design")
+    plt.title("Output Across Random Experiments")
 
-    plt.legend()
     plt.grid(True)
-    plt.tight_layout()
     plt.show()
-
+    
+    
 # ============================================================
-# MAIN DRIVER
+# OUTPUT EVOLUTION PLOT
 # ============================================================
 
 if __name__ == "__main__":
 
-    # ==========================================
-    # BOED
-    # ==========================================
-
-    X_boed, y_boed, Y_boed, param_boed = (
-        bayesian_optimization(
-            N_init=2,
-            max_experiments=12,
-            tol=1e-3
-        )
+    X, y, Y_full, params = random_design_study(
+        N_experiments=8
     )
 
-    summarize_results(
-        X_boed,
-        y_boed,
-        param_boed
-    )
+    summarize_results(X, y, params)
 
-    # ==========================================
-    # RANDOM
-    # ==========================================
+    parameter_error(params)
 
-    X_rand, y_rand, Y_rand, param_rand = (
-        random_design(
-            N_init=2,
-            max_experiments=12
-        )
-    )
+    plot_random_design(X)
 
-    summarize_results(
-        X_rand,
-        y_rand,
-        param_rand
-    )
-
-    # ==========================================
-    # BOED Plots
-    # ==========================================
-
-    plot_experiments(X_boed)
-
-    plot_parameter_convergence(param_boed)
-
-    plot_target_species(y_boed)
-
-    # ==========================================
-    # Comparison Plot
-    # ==========================================
-
-    compare_boed_vs_random(
-        param_boed,
-        param_rand
-    )
-    
-    
-    
+    plot_output(y)    
     
     
