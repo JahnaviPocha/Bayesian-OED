@@ -91,8 +91,8 @@ function newton_optimizer(single_snapshot_A, single_snapshot_B, yin, Yexp; molar
             else
                 lower = fill(0.0, 2)
                 upper = fill(20000, 2)
-                inner_optimizer = LBFGS()
-                iter = 1000
+                inner_optimizer = NelderMead()
+                iter = 100
             end
             res = optimize(f, lower, upper, k0, Fminbox(inner_optimizer), Optim.Options(iterations=iter, outer_iterations=50, store_trace=false, show_trace=true, extended_trace=false))
             #@show Optim.g_norm_trace(res)
@@ -112,10 +112,10 @@ function newton_optimizer(single_snapshot_A, single_snapshot_B, yin, Yexp; molar
             else
                 lower = fill(0.0, 2)
                 upper = fill(20000, 2)
-                inner_optimizer = LBFGS()
-                iter = 1000
+                inner_optimizer = NelderMead()
+                iter = 100
             end
-            res = optimize(f, lower, upper, k0, Fminbox(inner_optimizer), Optim.Options(iterations=iter, outer_iterations=50, store_trace=false, show_trace=true, extended_trace=false))
+            res = optimize(f, lower, upper, k0, Fminbox(inner_optimizer), Optim.Options(iterations=iter, outer_iterations=5, store_trace=false, show_trace=true, extended_trace=false))
             # @show Optim.g_norm_trace(res)
             @show Optim.iterations(res)
             @show Optim.x_converged(res)

@@ -1,28 +1,33 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Jun  8 16:12:18 2026
+Created on Thu Jun 18 16:53:56 2026
 
 @author: jahna
 """
 
+# -*- coding: utf-8 -*-
 """
-Corrected Fisher-information Bayesian OED driver for the 2-parameter ROM case.
+Corrected Fisher-information Bayesian OED driver for methanol production.
 
-Main corrections and improvements:
-- fixes the noise-study bug: noise changes STD_DATA, not N_REPEATS
-- keeps observed experiment data fixed once collected
-- uses actual experiment counts on convergence plots
-- uses the same initial design for all noise levels
-- replaces the old covariance-of-repeated-estimates proxy with a local
-  D-optimal Fisher information objective based on finite-difference
-  sensitivities dY_out / dk
-- tracks cumulative information gain of the selected design
-- uses combined plots for all noise levels
+This is the methanol analogue of bayes_design_ROM_FIO_corrected.py.
 
-Expected Julia tensor shape:
+Important methanol-specific point:
+    main_meoh.jl experiments() hardcodes the true methanol parameters.
+    Therefore, finite-difference sensitivities cannot be computed by passing
+    perturbed parameters into experiments(). This code calls Julia main(...)
+    directly with perturbed normalized k0 values, then extracts youts(...).
+
+Information objective:
+    F(x) = N_repeats / sigma^2 * J(x)^T J(x)
+    info(x) = 0.5 * [logdet(Prior + F(x)) - logdet(Prior)]
+
+where J = dY_out / dtheta, and theta is the normalized 9-parameter vector used
+internally by main_meoh.jl and newton_optimizer().
+
+Expected Julia noisy-data tensor shape:
     Y_out = (N_repeats, Nspec, Nexps)
 
-Put this file in inverse_prob_julia/ next to call_to_KPE_code.py before running.
+Put this file and call_to_KPE_code_meoh_fio.py in inverse_prob_julia/.
 """
 
 import matplotlib.pyplot as plt
@@ -33,62 +38,121 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel as C
 from sklearn.gaussian_process.kernels import RBF
 
-from call_to_KPE_code import experiments, parameter_estimator
+from call_to_KPE_code_meoh_fio import (
+    experiments,
+    main_model,
+    parameter_estimator,
+    youts,
+)
 
 
 # ============================================================
 # GLOBAL SETTINGS
 # ============================================================
 
-NSPEC = 3
-N_REACTIONS = 1
-N_UNKNOWN_PARAMETERS = 2
+NSPEC = 6
+N_REACTIONS = 2
+N_UNKNOWN_PARAMETERS = 9
 
-Y_BOUNDS = [(0.1, 0.5) for _ in range(NSPEC - 1)]
-TEMP_BOUNDS = (300.0, 600.0)
+# Species order from main_meoh.jl:
+# CO2, H2, H2O, CH3OH, CO, N2
+TARGET_SPECIES_INDEX = 3
 
-TARGET_SPECIES_INDEX = 2
-
-TRUE_K = np.array([4000.0, 4000.0], dtype=float)
-INITIAL_GUESS = np.array([1000.0, 1000.0], dtype=float)
+Y_BOUNDS = [
+    (0.10, 0.33),  # CO2
+    (0.10, 0.25),  # H2
+    (0.00, 0.01),  # H2O
+    (0.00, 0.30),  # CH3OH
+    (0.00, 0.01),  # CO
+]
+TEMP_BOUNDS = (450.0, 550.0)
 
 P_TOTAL = 50
 RATIO = 0.1
-STOICHIOMETRY = np.array([[-2.0, -1.0, 2.0]])
-
 N_REPEATS = 10
-NOISE_LEVELS = [1e-3, 1e-4, 1e-6]
 
-N_INIT = 3
+ST = np.array(
+    [
+        [-1.0, -3.0, 1.0, 1.0, 0.0, 0.0],
+        [-1.0, -1.0, 1.0, 0.0, 1.0, 0.0],
+    ],
+    dtype=float,
+)
+
+TRUE_PARAMS_PHYSICAL = np.array(
+    [
+        1.07,
+        3453.38,
+        0.499,
+        6.62e-11,
+        1.22e10,
+        40000.0,
+        17197.0,
+        124119.0,
+        -98084.0,
+    ],
+    dtype=float,
+)
+
+PARAM_LOWER = np.array(
+    [1e-2, 1e0, 1e-4, 1e-12, 1e7, 1e1, 1e1, 1e2, -2e5],
+    dtype=float,
+)
+PARAM_UPPER = np.array(
+    [1e2, 1e4, 1e2, 1e-8, 1e11, 1e5, 1e5, 1e6, -2e1],
+    dtype=float,
+)
+
+TRUE_PARAMS_NORMALIZED = (
+    (TRUE_PARAMS_PHYSICAL - PARAM_LOWER) / (PARAM_UPPER - PARAM_LOWER)
+)
+
+# main_meoh.jl complete_workflow uses IG = PreExp * 0.5 on the normalized scale.
+INITIAL_GUESS_NORMALIZED = 0.5 * TRUE_PARAMS_NORMALIZED
+INITIAL_GUESS_PHYSICAL = (
+    INITIAL_GUESS_NORMALIZED * (PARAM_UPPER - PARAM_LOWER) + PARAM_LOWER
+)
+
+NOISE_LEVELS = [1e-3, 1e-5, 1e-7]
+
+# Methanol has 9 unknowns, so more experiments are needed than the ROM case.
+# Start modestly for testing because each selected point needs finite
+# differences through the Julia model.
+N_INIT = 5
 MAX_EXPERIMENTS = 10
-N_CANDIDATES = 500
+N_CANDIDATES = 200
 
-# Keep False for fair noise-comparison plots. Set True for faster single runs.
 ALLOW_EARLY_STOP_IN_SWEEP = False
 CONVERGENCE_TOL = 1e-3
 
 BASE_SEED = 12345
 
-# This is a local D-optimal design. In synthetic validation it is common to use
-# the true parameter as the nominal value. For real experiments, replace this
-# with your best prior/previous estimate.
-NOMINAL_K_FOR_INFORMATION = TRUE_K.copy()
+# Synthetic validation: use true normalized parameters as the local nominal
+# point. For real studies, replace with prior mean or current best estimate.
+NOMINAL_THETA_FOR_INFORMATION = TRUE_PARAMS_NORMALIZED.copy()
 
 FD_REL_STEP = 1e-3
-FD_ABS_STEP = 1e-3
+FD_ABS_STEP = 1e-4
+THETA_LOWER = np.zeros(N_UNKNOWN_PARAMETERS)
+THETA_UPPER = np.ones(N_UNKNOWN_PARAMETERS)
 
-# Avoid unrealistically infinite information when sigma is extremely tiny.
 FIM_NOISE_FLOOR = 1e-12
 
-# Weak prior precision keeps logdet well-defined before adding information.
-PRIOR_STD = np.array([1.0e4, 1.0e4], dtype=float)
-PRIOR_PRECISION = np.diag(1.0 / (PRIOR_STD ** 2))
+# Weak prior precision on normalized parameters keeps logdet well-defined.
+PRIOR_STD_NORMALIZED = np.ones(N_UNKNOWN_PARAMETERS)
+PRIOR_PRECISION = np.diag(1.0 / (PRIOR_STD_NORMALIZED ** 2))
 
 GP_ALPHA = 1e-8
 EI_XI = 0.01
 MIN_SCALED_DISTANCE = 0.03
 
+# main_meoh.jl's RBS_full=true branch appears incomplete because rbs_snapshot
+# is not filled before being passed to newton_optimizer. Keep false unless the
+# Julia RBS_full branch is fixed.
 RBS_FULL = False
+
+NREF_INFORMATION = 2500
+NREF_ESTIMATION = 2500
 
 
 # ============================================================
@@ -104,11 +168,30 @@ def _cache_key_vector(v, decimals=10):
 
 
 # ============================================================
+# PARAMETER SCALE HELPERS
+# ============================================================
+
+def normalize_params(params_physical):
+    return (
+        (np.asarray(params_physical, dtype=float) - PARAM_LOWER)
+        / (PARAM_UPPER - PARAM_LOWER)
+    )
+
+
+def denormalize_params(theta):
+    return np.asarray(theta, dtype=float) * (PARAM_UPPER - PARAM_LOWER) + PARAM_LOWER
+
+
+def clip_theta(theta):
+    return np.clip(np.asarray(theta, dtype=float), THETA_LOWER, THETA_UPPER)
+
+
+# ============================================================
 # DESIGN HELPERS
 # ============================================================
 
 def complete_Y_in(Y_partial):
-    """Convert independent inlet mass fractions to the full species vector."""
+    """Convert independent inlet fractions to the full 6-species vector."""
     last = 1.0 - np.sum(Y_partial)
 
     if last < 0.0:
@@ -118,7 +201,7 @@ def complete_Y_in(Y_partial):
 
 
 def decode_design_vector(x):
-    """Decode x = [Y1, Y2, Temp]."""
+    """Decode x = [CO2, H2, H2O, CH3OH, CO, Temp]."""
     x = np.asarray(x, dtype=float)
     Y_partial = x[:-1]
     Temp = float(x[-1])
@@ -132,7 +215,7 @@ def decode_design_vector(x):
 
 
 def validate_yexp_shape(Yexp, nexps_expected, name="Yexp"):
-    """Check Julia experiment tensor shape: (N_repeats, Nspec, Nexps)."""
+    """Check Julia noisy experiment tensor shape: (N_repeats, Nspec, Nexps)."""
     arr = np.asarray(Yexp, dtype=float)
     expected = (N_REPEATS, NSPEC, nexps_expected)
 
@@ -145,32 +228,20 @@ def validate_yexp_shape(Yexp, nexps_expected, name="Yexp"):
     return arr
 
 
-def validate_deterministic_shape(Yexp):
-    """Check deterministic single-repeat Julia tensor shape."""
-    arr = np.asarray(Yexp, dtype=float)
-    expected = (1, NSPEC, 1)
-
-    if arr.shape != expected:
-        raise ValueError(
-            f"deterministic Yexp has shape {arr.shape}, expected {expected}."
-        )
-
-    return arr
-
-
 # ============================================================
 # JULIA MODEL WRAPPERS
 # ============================================================
 
-def deterministic_output(x, k):
+def deterministic_output(x, theta_normalized):
     """
-    Deterministic outlet vector Y_out(x, k), no added noise.
+    Deterministic outlet vector Y_out(x, theta).
 
-    Uses Julia experiments() with std_data=0 and N_repeats=1.
+    theta_normalized is the 9-parameter normalized vector used as k0 by
+    main_meoh.jl.
     """
     x = np.asarray(x, dtype=float)
-    k = np.asarray(k, dtype=float)
-    key = (_cache_key_vector(x, 12), _cache_key_vector(k, 8))
+    theta_normalized = clip_theta(theta_normalized)
+    key = (_cache_key_vector(x, 12), _cache_key_vector(theta_normalized, 10))
 
     if key in _MODEL_OUTPUT_CACHE:
         return _MODEL_OUTPUT_CACHE[key].copy()
@@ -180,41 +251,39 @@ def deterministic_output(x, k):
     if Y_in is None:
         raise ValueError(f"Invalid design vector: {x}")
 
-    Y_in = np.asarray(Y_in, dtype=float).reshape(NSPEC, 1)
-    Temp = np.asarray([Temp], dtype=float)
-
-    Yexp = experiments(
-        Y_in=Y_in,
-        Temp=Temp,
-        P_total=P_TOTAL,
-        Nexps=1,
+    # Match main_meoh.jl experiments(): it calls main(...) without passing
+    # P_total, so main() uses its own default P_total.
+    d = main_model(
+        nref=NREF_INFORMATION,
+        inlet_MFs=np.asarray(Y_in, dtype=float),
         ratio=RATIO,
-        N_repeats=1,
-        std_data=0.0,
-        Nspec=NSPEC,
-        k_true=k.tolist(),
+        St=ST,
+        k0=np.asarray(theta_normalized, dtype=float),
+        T=Temp,
     )
 
-    Yexp = validate_deterministic_shape(Yexp)
-    y_out = np.asarray(Yexp[0, :, 0], dtype=float)
+    y_out = np.asarray(youts(d, Nspec=NSPEC), dtype=float).reshape(-1)
+
+    if y_out.size != NSPEC:
+        raise ValueError(f"youts returned length {y_out.size}, expected {NSPEC}.")
 
     _MODEL_OUTPUT_CACHE[key] = y_out.copy()
 
     return y_out
 
 
-def finite_difference_sensitivities(x, k_ref):
+def finite_difference_sensitivities(x, theta_ref):
     """
-    Compute J = dY_out / dk at one design using finite differences.
+    Compute J = dY_out / dtheta at one design.
 
-    J shape:
-        (Nspec, N_UNKNOWN_PARAMETERS)
+    theta is normalized, so J has shape (Nspec, 9) with derivatives with
+    respect to normalized kinetic parameters.
     """
     x = np.asarray(x, dtype=float)
-    k_ref = np.asarray(k_ref, dtype=float)
+    theta_ref = clip_theta(theta_ref)
     key = (
         _cache_key_vector(x, 12),
-        _cache_key_vector(k_ref, 8),
+        _cache_key_vector(theta_ref, 10),
         FD_REL_STEP,
         FD_ABS_STEP,
     )
@@ -223,40 +292,49 @@ def finite_difference_sensitivities(x, k_ref):
         return _SENSITIVITY_CACHE[key].copy()
 
     J = np.zeros((NSPEC, N_UNKNOWN_PARAMETERS), dtype=float)
-    y0 = None
 
     for j in range(N_UNKNOWN_PARAMETERS):
-        step = max(abs(k_ref[j]) * FD_REL_STEP, FD_ABS_STEP)
+        step = max(abs(theta_ref[j]) * FD_REL_STEP, FD_ABS_STEP)
+        step = min(step, 0.25)
 
-        k_plus = k_ref.copy()
-        k_minus = k_ref.copy()
-        k_plus[j] += step
-        k_minus[j] -= step
+        theta_plus = theta_ref.copy()
+        theta_minus = theta_ref.copy()
 
-        if k_minus[j] > 0.0:
-            y_plus = deterministic_output(x, k_plus)
-            y_minus = deterministic_output(x, k_minus)
+        can_step_down = theta_ref[j] - step >= THETA_LOWER[j]
+        can_step_up = theta_ref[j] + step <= THETA_UPPER[j]
+
+        if can_step_down and can_step_up:
+            theta_plus[j] += step
+            theta_minus[j] -= step
+            y_plus = deterministic_output(x, theta_plus)
+            y_minus = deterministic_output(x, theta_minus)
             J[:, j] = (y_plus - y_minus) / (2.0 * step)
-        else:
-            if y0 is None:
-                y0 = deterministic_output(x, k_ref)
-
-            y_plus = deterministic_output(x, k_plus)
+        elif can_step_up:
+            theta_plus[j] += step
+            y0 = deterministic_output(x, theta_ref)
+            y_plus = deterministic_output(x, theta_plus)
             J[:, j] = (y_plus - y0) / step
+        elif can_step_down:
+            theta_minus[j] -= step
+            y0 = deterministic_output(x, theta_ref)
+            y_minus = deterministic_output(x, theta_minus)
+            J[:, j] = (y0 - y_minus) / step
+        else:
+            raise ValueError(f"Cannot finite-difference parameter {j}.")
 
     _SENSITIVITY_CACHE[key] = J.copy()
 
     return J
 
 
-def fisher_information_matrix(x, k_ref, noise_level):
+def fisher_information_matrix(x, theta_ref, noise_level):
     """
     Local Fisher information matrix for one candidate experiment.
 
-    Assumes all species outputs have independent Gaussian noise with standard
-    deviation noise_level, and N_REPEATS repeated measurements are averaged.
+    Assumes independent equal Gaussian noise on all species outputs and
+    N_REPEATS repeated measurements.
     """
-    J = finite_difference_sensitivities(x, k_ref)
+    J = finite_difference_sensitivities(x, theta_ref)
     sigma = max(float(noise_level), FIM_NOISE_FLOOR)
     weight = N_REPEATS / (sigma ** 2)
     F = weight * (J.T @ J)
@@ -265,7 +343,7 @@ def fisher_information_matrix(x, k_ref, noise_level):
 
 
 def information_gain_from_F(F):
-    """D-optimal information gain relative to the weak prior precision."""
+    """D-optimal information gain relative to the normalized-parameter prior."""
     sign0, logdet0 = np.linalg.slogdet(PRIOR_PRECISION)
     sign1, logdet1 = np.linalg.slogdet(PRIOR_PRECISION + F)
 
@@ -275,15 +353,10 @@ def information_gain_from_F(F):
     return 0.5 * (logdet1 - logdet0)
 
 
-def point_information_objective(x, noise_level, k_ref=None):
-    """
-    Pointwise D-optimal information score for one experiment.
-
-    The BO surrogate learns this pointwise score. The selected design's
-    cumulative information is tracked separately from the sum of F matrices.
-    """
-    if k_ref is None:
-        k_ref = NOMINAL_K_FOR_INFORMATION
+def point_information_objective(x, noise_level, theta_ref=None):
+    """Pointwise D-optimal information score for one experiment."""
+    if theta_ref is None:
+        theta_ref = NOMINAL_THETA_FOR_INFORMATION
 
     Y_in, _ = decode_design_vector(x)
 
@@ -291,7 +364,7 @@ def point_information_objective(x, noise_level, k_ref=None):
         return -1.0e12, np.zeros((N_UNKNOWN_PARAMETERS, N_UNKNOWN_PARAMETERS))
 
     try:
-        F = fisher_information_matrix(x, k_ref, noise_level)
+        F = fisher_information_matrix(x, theta_ref, noise_level)
         score = information_gain_from_F(F)
     except Exception as exc:
         print(f"Information objective failed at x={x}: {exc}")
@@ -301,7 +374,7 @@ def point_information_objective(x, noise_level, k_ref=None):
 
 
 def cumulative_information_gain(F_matrices):
-    """D-optimal information gain for the full selected design."""
+    """D-optimal information gain for the selected design set."""
     if not F_matrices:
         return 0.0
 
@@ -312,10 +385,10 @@ def cumulative_information_gain(F_matrices):
 
 def run_noisy_experiment(x, noise_level):
     """
-    Run one noisy experiment used for parameter estimation.
+    Run one noisy methanol experiment through Julia experiments().
 
-    Returns:
-        target scalar and full Yexp tensor with shape (N_repeats, Nspec, 1)
+    Returns target methanol scalar and full noisy tensor:
+        (N_repeats, Nspec, 1)
     """
     Y_in, Temp = decode_design_vector(x)
 
@@ -334,23 +407,27 @@ def run_noisy_experiment(x, noise_level):
         N_repeats=N_REPEATS,
         std_data=noise_level,
         Nspec=NSPEC,
-        k_true=TRUE_K.tolist(),
     )
 
     Yexp = validate_yexp_shape(Yexp, nexps_expected=1)
     y_mean = np.mean(Yexp, axis=0)[:, 0]
-    target = float(y_mean[TARGET_SPECIES_INDEX])
+    methanol = float(y_mean[TARGET_SPECIES_INDEX])
 
-    return target, Yexp
+    return methanol, Yexp
 
 
 def estimate_parameters_from_observations(
     X,
     Y_full,
     noise_level,
-    initial_guess=None,
+    initial_guess_normalized=None,
 ):
-    """Estimate k from already-collected observations. Does not resimulate old data."""
+    """
+    Estimate physical methanol parameters from already-collected observations.
+
+    Julia parameter_estimator() expects the initial guess on the normalized
+    scale and returns physical parameters.
+    """
     X = np.asarray(X, dtype=float)
     Nexps = X.shape[0]
 
@@ -370,8 +447,8 @@ def estimate_parameters_from_observations(
     Temp_all = np.asarray(Temp_all, dtype=float)
     Y_full = validate_yexp_shape(Y_full, nexps_expected=Nexps, name="Y_full")
 
-    if initial_guess is None:
-        initial_guess = INITIAL_GUESS
+    if initial_guess_normalized is None:
+        initial_guess_normalized = INITIAL_GUESS_NORMALIZED
 
     kwargs = {
         "ratio": RATIO,
@@ -379,29 +456,29 @@ def estimate_parameters_from_observations(
         "Y_in": Y_in_all,
         "Temp": Temp_all,
         "P_total": P_TOTAL,
-        "St": STOICHIOMETRY,
-        "nref": 2500,
+        "St": ST,
+        "nref": NREF_ESTIMATION,
         "nreac": N_REACTIONS,
         "Nexps": Nexps,
         "Y_out": Y_full,
         "unknown_parameters": N_UNKNOWN_PARAMETERS,
-        "IG": np.asarray(initial_guess, dtype=float),
+        "IG": clip_theta(initial_guess_normalized),
         "N_repeats": N_REPEATS,
         "\u03c3_data": noise_level,
         "RBS_full": RBS_FULL,
     }
 
-    k = parameter_estimator(**kwargs)
-    k = np.asarray(k, dtype=float).reshape(-1)
+    params_physical = parameter_estimator(**kwargs)
+    params_physical = np.asarray(params_physical, dtype=float).reshape(-1)
 
-    return k
+    return params_physical
 
 
 # ============================================================
 # DESIGN GENERATION
 # ============================================================
 
-def generate_initial_design(N_init=3, rng=None):
+def generate_initial_design(N_init=5, rng=None):
     rng = np.random.default_rng() if rng is None else rng
     X_init = []
 
@@ -421,7 +498,7 @@ def generate_initial_design(N_init=3, rng=None):
     return np.asarray(X_init, dtype=float)
 
 
-def generate_candidates(n_candidates=500, rng=None):
+def generate_candidates(n_candidates=200, rng=None):
     rng = np.random.default_rng() if rng is None else rng
     candidates = []
 
@@ -471,7 +548,7 @@ def train_gp(X, y):
         kernel=kernel,
         alpha=GP_ALPHA,
         normalize_y=True,
-        n_restarts_optimizer=5,
+        n_restarts_optimizer=3,
         random_state=BASE_SEED,
     )
 
@@ -514,7 +591,7 @@ def filter_far_candidates(X_candidates, X_existing):
     return X_candidates[mask]
 
 
-def select_next_experiment(gp, X, y_info, rng=None, n_candidates=500):
+def select_next_experiment(gp, X, y_info, rng=None, n_candidates=200):
     X_candidates = generate_candidates(n_candidates=n_candidates, rng=rng)
     X_candidates = filter_far_candidates(X_candidates, X)
 
@@ -528,32 +605,37 @@ def select_next_experiment(gp, X, y_info, rng=None, n_candidates=500):
 # BO LOOP
 # ============================================================
 
+def relative_parameter_error(params_physical):
+    params_physical = np.asarray(params_physical, dtype=float)
+    denom = np.maximum(np.abs(TRUE_PARAMS_PHYSICAL), 1e-30)
+
+    return (params_physical - TRUE_PARAMS_PHYSICAL) / denom
+
+
 def check_parameter_convergence(param_history, tol=1e-3):
     if len(param_history) < 2:
         return False
 
-    prev = np.asarray(param_history[-2], dtype=float)
-    curr = np.asarray(param_history[-1], dtype=float)
-    denom = np.maximum(np.abs(prev), np.abs(TRUE_K))
-    denom = np.maximum(denom, 1e-30)
-    delta = np.linalg.norm((curr - prev) / denom) / np.sqrt(curr.size)
+    prev_theta = normalize_params(param_history[-2])
+    curr_theta = normalize_params(param_history[-1])
+    delta = np.linalg.norm(curr_theta - prev_theta) / np.sqrt(curr_theta.size)
 
-    print(f"Relative parameter change: {delta:.4e}")
+    print(f"Relative normalized-parameter change: {delta:.4e}")
 
     return delta < tol
 
 
 def BO(
     noise_level,
-    N_init=3,
+    N_init=5,
     max_experiments=10,
-    n_candidates=500,
+    n_candidates=200,
     allow_early_stop=True,
     tol=1e-3,
     rng_seed=None,
     initial_design=None,
 ):
-    print("\n=== INITIAL EXPERIMENTS ===")
+    print("\n=== INITIAL METHANOL FIO EXPERIMENTS ===")
     print(f"noise_level = {noise_level:.0e}")
 
     rng = np.random.default_rng(rng_seed)
@@ -564,7 +646,7 @@ def BO(
         X = np.asarray(initial_design, dtype=float).copy()
 
     y_info = []
-    y_target = []
+    y_methanol = []
     Y_tensor_list = []
     F_matrices = []
 
@@ -572,41 +654,41 @@ def BO(
         info, F = point_information_objective(
             x,
             noise_level=noise_level,
-            k_ref=NOMINAL_K_FOR_INFORMATION,
+            theta_ref=NOMINAL_THETA_FOR_INFORMATION,
         )
-        target, Yexp = run_noisy_experiment(x, noise_level=noise_level)
+        methanol, Yexp = run_noisy_experiment(x, noise_level=noise_level)
 
         y_info.append(info)
-        y_target.append(target)
+        y_methanol.append(methanol)
         F_matrices.append(F)
         Y_tensor_list.append(Yexp)
 
         print(f"Init Exp {i + 1}: x={x}")
         print(f"  point information = {info:.6f}")
-        print(f"  target output = {target:.6f}")
+        print(f"  methanol = {methanol:.6f}")
 
     y_info = np.asarray(y_info, dtype=float)
-    y_target = np.asarray(y_target, dtype=float)
+    y_methanol = np.asarray(y_methanol, dtype=float)
     Y_full = validate_yexp_shape(
         np.concatenate(Y_tensor_list, axis=2),
         nexps_expected=N_init,
         name="Y_full",
     )
 
-    k = estimate_parameters_from_observations(
+    params_physical = estimate_parameters_from_observations(
         X,
         Y_full,
         noise_level=noise_level,
-        initial_guess=INITIAL_GUESS,
+        initial_guess_normalized=INITIAL_GUESS_NORMALIZED,
     )
-    param_history = [k]
+    param_history = [params_physical]
     param_exp_counts = [len(X)]
     total_info_history = [cumulative_information_gain(F_matrices)]
 
-    print("Initial k =", k)
+    print("Initial physical parameters =", params_physical)
     print(f"Initial cumulative information = {total_info_history[-1]:.6f}")
 
-    print("\n=== BO START ===")
+    print("\n=== METHANOL FIO BO START ===")
 
     while len(X) < max_experiments:
         gp = train_gp(X, y_info)
@@ -621,13 +703,13 @@ def BO(
         info_new, F_new = point_information_objective(
             x_new,
             noise_level=noise_level,
-            k_ref=NOMINAL_K_FOR_INFORMATION,
+            theta_ref=NOMINAL_THETA_FOR_INFORMATION,
         )
-        target_new, Yexp_new = run_noisy_experiment(x_new, noise_level=noise_level)
+        methanol_new, Yexp_new = run_noisy_experiment(x_new, noise_level=noise_level)
 
         X = np.vstack([X, x_new])
         y_info = np.append(y_info, info_new)
-        y_target = np.append(y_target, target_new)
+        y_methanol = np.append(y_methanol, methanol_new)
         F_matrices.append(F_new)
         Y_full = validate_yexp_shape(
             np.concatenate((Y_full, Yexp_new), axis=2),
@@ -635,13 +717,16 @@ def BO(
             name="Y_full",
         )
 
-        k = estimate_parameters_from_observations(
+        # Feed the previous estimate back as the next normalized initial guess.
+        previous_theta = clip_theta(normalize_params(param_history[-1]))
+        params_physical = estimate_parameters_from_observations(
             X,
             Y_full,
             noise_level=noise_level,
-            initial_guess=param_history[-1],
+            initial_guess_normalized=previous_theta,
         )
-        param_history.append(k)
+
+        param_history.append(params_physical)
         param_exp_counts.append(len(X))
         total_info_history.append(cumulative_information_gain(F_matrices))
 
@@ -651,8 +736,8 @@ def BO(
         print("New design =", x_new)
         print(f"Point information = {info_new:.6f}")
         print(f"Cumulative information = {total_info_history[-1]:.6f}")
-        print(f"Target output = {target_new:.6f}")
-        print("Estimated k =", k)
+        print(f"Methanol = {methanol_new:.6f}")
+        print("Estimated physical parameters =", params_physical)
 
         if allow_early_stop and check_parameter_convergence(param_history, tol):
             print("\nConvergence reached -> stopping early.")
@@ -661,7 +746,7 @@ def BO(
     return {
         "X": X,
         "point_information": y_info,
-        "target_output": y_target,
+        "methanol": y_methanol,
         "Y_full": Y_full,
         "F_matrices": np.asarray(F_matrices, dtype=float),
         "param_history": np.asarray(param_history, dtype=float),
@@ -683,7 +768,7 @@ def run_noise_study():
     for noise in NOISE_LEVELS:
         print("\n")
         print("=" * 60)
-        print(f"RUNNING NOISE CASE sigma = {noise:.0e}")
+        print(f"RUNNING METHANOL FIO CASE sigma = {noise:.0e}")
         print("=" * 60)
 
         result = BO(
@@ -697,16 +782,24 @@ def run_noise_study():
             initial_design=shared_initial_design,
         )
 
-        final_k = result["param_history"][-1]
+        final_params = result["param_history"][-1]
+        rel_errors = relative_parameter_error(final_params)
+        rel_norm = np.linalg.norm(rel_errors) / np.sqrt(N_UNKNOWN_PARAMETERS)
         best_idx = int(np.argmax(result["point_information"]))
-        rel_error = np.linalg.norm(final_k - TRUE_K) / np.linalg.norm(TRUE_K)
 
         print("\n===== FINAL RESULTS SUMMARY =====")
         print(f"noise sigma = {noise:.0e}")
         print("Total experiments used:", len(result["X"]))
-        print(f"k1 = {final_k[0]:.6f}")
-        print(f"k2 = {final_k[1]:.6f}")
-        print(f"Relative parameter error = {rel_error:.6e}")
+        print(f"RMS relative parameter error = {rel_norm:.6e}")
+        print("Final physical parameters:")
+
+        for i, value in enumerate(final_params):
+            print(
+                f"  p{i + 1}: {value:.6e} "
+                f"true={TRUE_PARAMS_PHYSICAL[i]:.6e} "
+                f"rel_error={rel_errors[i]:+.3e}"
+            )
+
         print("Best pointwise-information experiment:")
         print(result["X"][best_idx])
         print(f"Point information = {result['point_information'][best_idx]:.6f}")
@@ -732,42 +825,45 @@ def _apply_plain_axis(ax):
     ax.ticklabel_format(axis="y", style="plain", useOffset=False)
 
 
-def plot_k_convergence_all(results):
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharex=True)
+def plot_relative_parameter_errors(results):
+    fig, axes = plt.subplots(3, 3, figsize=(14, 10), sharex=True)
+    axes = axes.ravel()
 
     for noise, data in results.items():
         params = data["param_history"]
         exp_counts = data["param_exp_counts"]
+        errors = relative_parameter_error(params)
         label = f"sigma={_noise_label(noise)}"
 
-        axes[0].plot(exp_counts, params[:, 0], marker="o", linewidth=2, label=label)
-        axes[1].plot(exp_counts, params[:, 1], marker="s", linewidth=2, label=label)
+        for i, ax in enumerate(axes):
+            ax.plot(exp_counts, errors[:, i], marker="o", linewidth=1.4, label=label)
 
     for i, ax in enumerate(axes):
-        ax.axhline(TRUE_K[i], color="black", linestyle="--", linewidth=2)
-        ax.axhline(INITIAL_GUESS[i], color="gray", linestyle=":", linewidth=1.5)
+        ax.axhline(0.0, color="black", linestyle="--", linewidth=1.0)
+        ax.set_title(f"p{i + 1}")
         ax.set_xlabel("Total experiments used")
-        ax.set_ylabel(f"Estimated k{i + 1}")
-        ax.set_title(f"k{i + 1} convergence")
+        ax.set_ylabel("relative error")
+        ax.set_yscale("symlog", linthresh=1e-3)
         ax.grid(True)
-        _apply_plain_axis(ax)
 
     axes[0].legend()
+    fig.suptitle("Methanol FIO Parameter Relative Error")
     fig.tight_layout()
     plt.show()
 
 
-def plot_parameter_error(results):
+def plot_rms_parameter_error(results):
     plt.figure(figsize=(9, 6))
 
     for noise, data in results.items():
         params = data["param_history"]
         exp_counts = data["param_exp_counts"]
-        errors = np.linalg.norm(params - TRUE_K, axis=1) / np.linalg.norm(TRUE_K)
+        rel_errors = relative_parameter_error(params)
+        rms_errors = np.linalg.norm(rel_errors, axis=1) / np.sqrt(N_UNKNOWN_PARAMETERS)
 
         plt.plot(
             exp_counts,
-            errors,
+            rms_errors,
             marker="o",
             linewidth=2,
             label=f"sigma={_noise_label(noise)}",
@@ -775,8 +871,8 @@ def plot_parameter_error(results):
 
     plt.yscale("log")
     plt.xlabel("Total experiments used")
-    plt.ylabel("Relative parameter error")
-    plt.title("Parameter Error Convergence")
+    plt.ylabel("RMS relative parameter error")
+    plt.title("Methanol FIO Parameter Error Convergence")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
@@ -797,14 +893,14 @@ def plot_information_gain(results):
 
     plt.xlabel("Total experiments used")
     plt.ylabel("Cumulative D-optimal information gain")
-    plt.title("Bayesian OED Information Gain")
+    plt.title("Methanol FIO Information Gain")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
     plt.show()
 
 
-def plot_point_information(results):
+def plot_best_point_information(results):
     plt.figure(figsize=(9, 6))
 
     for noise, data in results.items():
@@ -821,10 +917,77 @@ def plot_point_information(results):
 
     plt.xlabel("Experiment number")
     plt.ylabel("Best pointwise information")
-    plt.title("Best Pointwise Information Found by BO")
+    plt.title("Best Methanol FIO Pointwise Information Found by BO")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
+    plt.show()
+
+
+def plot_methanol_outputs(results):
+    plt.figure(figsize=(9, 6))
+
+    for noise, data in results.items():
+        x_axis = np.arange(1, len(data["methanol"]) + 1)
+
+        plt.plot(
+            x_axis,
+            data["methanol"],
+            marker="o",
+            linewidth=2,
+            label=f"sigma={_noise_label(noise)}",
+        )
+
+    plt.xlabel("Experiment number")
+    plt.ylabel("Methanol outlet fraction")
+    plt.title("Methanol Output at Selected FIO Designs")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_selected_physical_parameters(results, selected=(0, 1, 4, 8)):
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharex=True)
+    axes = axes.ravel()
+
+    for noise, data in results.items():
+        params = data["param_history"]
+        exp_counts = data["param_exp_counts"]
+        label = f"sigma={_noise_label(noise)}"
+
+        for axis_index, param_index in enumerate(selected):
+            axes[axis_index].plot(
+                exp_counts,
+                params[:, param_index],
+                marker="o",
+                linewidth=1.4,
+                label=label,
+            )
+
+    for axis_index, param_index in enumerate(selected):
+        ax = axes[axis_index]
+        ax.axhline(
+            TRUE_PARAMS_PHYSICAL[param_index],
+            color="black",
+            linestyle="--",
+            linewidth=1.0,
+        )
+        ax.axhline(
+            INITIAL_GUESS_PHYSICAL[param_index],
+            color="gray",
+            linestyle=":",
+            linewidth=1.0,
+        )
+        ax.set_title(f"p{param_index + 1}")
+        ax.set_xlabel("Total experiments used")
+        ax.set_ylabel("physical value")
+        ax.grid(True)
+        _apply_plain_axis(ax)
+
+    axes[0].legend()
+    fig.suptitle("Selected Methanol FIO Parameter Convergence")
+    fig.tight_layout()
     plt.show()
 
 
@@ -841,9 +1004,9 @@ def plot_designs(results):
             label=f"sigma={_noise_label(noise)}",
         )
 
-    plt.xlabel("Y1")
+    plt.xlabel("CO2 inlet fraction")
     plt.ylabel("Temperature (K)")
-    plt.title("Selected Experimental Designs")
+    plt.title("Methanol FIO Selected Designs")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
@@ -851,10 +1014,12 @@ def plot_designs(results):
 
 
 def plot_all(results):
-    plot_k_convergence_all(results)
-    plot_parameter_error(results)
+    plot_relative_parameter_errors(results)
+    plot_rms_parameter_error(results)
     plot_information_gain(results)
-    plot_point_information(results)
+    plot_best_point_information(results)
+    plot_methanol_outputs(results)
+    plot_selected_physical_parameters(results)
     plot_designs(results)
 
 
