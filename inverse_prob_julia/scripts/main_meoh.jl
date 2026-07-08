@@ -5,16 +5,12 @@ using SimplexGridFactory
 using ExtendableGrids
 using VoronoiFVM
 using LinearAlgebra
-using NLsolve
 using TimerOutputs
 using LinearSolve, ExtendableSparse
 using Statistics
 using Distributions
 using QuasiMonteCarlo
 using DelimitedFiles
-using AMGCLWrap
-using AlgebraicMultigrid
-using GridVisualize
 #using Plots
 #using CairoMakie
 using inverse_problem_RBS_CFD_het_cat
@@ -136,7 +132,7 @@ function main(; nref=1, T=493, P_total=10, levels=1, RBS=false, St=0.0, ratio=0.
     h = 1.0 / convert(Float64, nref - 1)
     X = collect(0.0:h:L)
     Y = collect(0.0:h:H)
-    grid = VoronoiFVM.Grid(X, Y)
+    grid = simplexgrid(X, Y)
     bfacemask!(grid, [xsp * L, 0], [xep * L, 0], 5)
     bfacemask!(grid, [xep * L, 0], [L, 0], 6)
 
@@ -246,17 +242,8 @@ function main(; nref=1, T=493, P_total=10, levels=1, RBS=false, St=0.0, ratio=0.
     Γ_catalyst = [5]
 
 
+    tsol = VoronoiFVM.solve(ysys; maxiters=1000, inival=initvalue, abstol=1e-12, reltol=0.0, verbose=false, tol_round=0.0, tol_mono=0.0, log=true, damp_initial=0.15) #, damp_grow = 1.2) #0.15,damp_grow = 1.5)
 
-    #bfaceindices = unique(arr_out)
-    #println(size(bnodes))
-
-    @info "Strategy: $(strategy)"
-    control = SolverControl(strategy, ysys)
-    @info control.method_linear
-    #method_linear = KrylovJL_BICGSTAB(), precon_linear = SA_AMGPreconditioner(), keepcurrent_linear = true,  tol_round=0.0, tol_mono=0.0, 
-    @timeit "Overall Time" begin
-        tsol = VoronoiFVM.solve(ysys; maxiters=1000, inival=initvalue, abstol=1e-12, reltol=0.0, verbose=false, tol_round=0.0, tol_mono=0.0, log=true, damp_initial=0.15) #, damp_grow = 1.2) #0.15,damp_grow = 1.5)
-    end
 
     factory = VoronoiFVM.TestFunctionFactory(ysys)
     tfc_rea = testfunction(factory, [Γ_inlet; Γ_outlet; [1]; [3]; [6]], [Γ_catalyst;])
@@ -277,8 +264,8 @@ function main(; nref=1, T=493, P_total=10, levels=1, RBS=false, St=0.0, ratio=0.
 
 end
 
-function Inverse_Problem_Paras(; nref=2500, ratio=0.01, nspec=0, T=493, inlet_MFs=0.0, St=St) #TODO should go in source files 
-    d = main(nref=nref, RBS=true, ratio=ratio, inlet_MFs=inlet_MFs, T=T, St=St)
+function Inverse_Problem_Paras(; nref=2500, ratio=0.01, P_total=10.0, nspec=0, T=493, inlet_MFs=0.0, St=St) #TODO should go in source files 
+    d = main(nref=nref, RBS=true, P_total=P_total, ratio=ratio, inlet_MFs=inlet_MFs, T=T, St=St)
     #a = yout_weighted(d)
     #b=ycat_weighted(d)
     snapshot_A = []
@@ -295,21 +282,19 @@ end
 
 function experimental_data(sample; Nspec=0.0, Nexps=0)
     Y_in = zeros(Nspec, Nexps)
-    for i in 1:Nspec-1
+    for i in 1:(Nspec-1)
         Y_in[i, :] = sample[i, :]
     end
     Y_in[end, :] = 1 .- sum(Y_in[i, :] for i in 1:(Nspec-1))
-
-
-    Temp = sample[end, :] #zeros(Nexps)
-
-    return Y_in, Temp
+    Temp = sample[end-1, :] #zeros(Nexps)
+    P = sample[end, :]
+    return Y_in, Temp, P
 end
 
 function random_points_generator(; Nexps=3, nspecs=6, lb=[0.1, 0.2, 0.0, 0.0, 0.0, 300], ub=[0.4, 0.5, 0.01, 0.01, 0.01, 600], Sampling=HaltonSample())
     s = QuasiMonteCarlo.sample(Nexps, lb, ub, Sampling)
-    Yin, Temp = experimental_data(s; Nspec=nspecs, Nexps=Nexps)
-    return Yin, Temp
+    Yin, Temp, P = experimental_data(s; Nspec=nspecs, Nexps=Nexps)
+    return Yin, Temp, P
 end
 
 function experiments(; Y_in, Temp, P_total, Nexps, ratio, N_repeats, std_data, Nspec)
@@ -329,8 +314,8 @@ function experiments(; Y_in, Temp, P_total, Nexps, ratio, N_repeats, std_data, N
     @info "Total Number of Experiments is $Nexps"
     for i in 1:Nexps
         k_meth_rxn = PreExp#vcat(PreExp, InExp)#reaction_parameters(PreExp, InExp; T=Temp[i]) #
-        mixture_density[i] = density_rechner(molar_weights, Y_in[:, i], P_total, Temp[i])
-        d = main(nref=2500, inlet_MFs=Y_in[:, i], ratio=ratio, St=St, k0=k_meth_rxn, T=Temp[i]) #T + i * ΔT 
+        mixture_density[i] = density_rechner(molar_weights, Y_in[:, i], P_total[i], Temp[i])
+        d = main(nref=2500, inlet_MFs=Y_in[:, i], ratio=ratio, St=St, k0=k_meth_rxn, T=Temp[i], P_total=P_total[i]) #T + i * ΔT 
         Yout = youts(d, Nspec=Nspec) #yout_weighted(d;Nspecs=Nspec) #
         for j in 1:Nspec
             Yexp[j, i] = Yout[j]
@@ -356,57 +341,53 @@ function parameter_estimator(; ratio, nspec, Y_in, Temp, P_total, St, nref=2500,
     srbs_time = 0.0
     rbs_time = 0.0
     mixture_density = zeros(Nexps)
+    mixture_mw = zeros(Nexps)
     X = fill(σ_data, nspec)
     V = (Diagonal(X) .^ 2) #./ 12 
     @info "Evaluating Kinetic Parameters"
     molar_weights = [44.01, 2.016, 18.01528, 32.04, 28.01, 28.0134]
     B_RBS = 0.0
     for j in 1:Nexps
-        A, B = Inverse_Problem_Paras(; nref=nref, ratio=ratio, nspec=nspec, inlet_MFs=Y_in[:, j], T=Temp[j], St=St)
-        mixture_density[j] = density_rechner(molar_weights, Y_in[:, j], P_total, Temp[j])
+        A, B = Inverse_Problem_Paras(; nref=nref, ratio=ratio, nspec=nspec, inlet_MFs=Y_in[:, j], T=Temp[j], P_total=P_total[j],St=St)
+        mixture_density[j] = density_rechner(molar_weights, Y_in[:, j], P_total[j], Temp[j])
+        mixture_mw[j] = average_molar_weight(Y_in[:, j], molar_weights)
         push!(single_snapshot_A, A)
         push!(single_snapshot_B, B)
         # #srbs_time += srbs.time
         if RBS_full == true
             @info "Conducting Offline Step for Full Reduced Basis"
-            B_RBS = RBS_Snapshots(main; nref=nref, ratio=ratio, St=St, Nexps=Nexps, nspec=nspec, nreac=nreac, inlet_MFs=Y_in[:, j], T=Temp[j])
-             # push!(rbs_snapshot, B_RBS)
-            # rbs_time += rbs.time
+            B_RBS = RBS_Snapshots(main; nref=nref, ratio=ratio, St=St, Nexps=Nexps, nspec=nspec, nreac=nreac, inlet_MFs=Y_in[:, j], T=Temp[j], P_total=P_total[j])
         else
             B_RBS = 0.0
         end
     end
-  
-
     if RBS_full == true
         @info "Estimating Parameters using RBS"
-        k, _ = newton_optimizer(single_snapshot_A, single_snapshot_B, Y_in, Y_out; mixture_density=mixture_density, Initial_Guess=IG, molar_weights=molar_weights, B_RBS=rbs_snapshot, st=St, cov=V, dof=unknown_parameters, RBS=true, print=true, lm=true, T=Temp, Nexps=Nexps, N_measurements=N_repeats)
+        k, _ = newton_optimizer(single_snapshot_A, single_snapshot_B, Y_in, Y_out; Mw_avg=mixture_mw, mixture_density=mixture_density, Initial_Guess=IG, molar_weights=molar_weights, B_RBS=rbs_snapshot, st=St, cov=V, dof=unknown_parameters, RBS=true, print=true, lm=true, T=Temp, Nexps=Nexps, N_measurements=N_repeats)
     else
         @info "Estimating Parameters using Single Reduced Basis with Forward Solver"
-        k, _ = newton_optimizer(single_snapshot_A, single_snapshot_B, Y_in, Y_out; Fwd=true, mixture_density=mixture_density, molar_weights=molar_weights, Initial_Guess=IG, B_RBS=B_RBS, st=St, cov=V, dof=unknown_parameters, RBS=false, print=true, lm=true, T=Temp, Nexps=Nexps, N_measurements=N_repeats)
+        k, _ = newton_optimizer(single_snapshot_A, single_snapshot_B, Y_in, Y_out; Mw_avg=mixture_mw, Fwd=true, mixture_density=mixture_density, molar_weights=molar_weights, Initial_Guess=IG, B_RBS=B_RBS, st=St, cov=V, dof=unknown_parameters, RBS=false, print=true, lm=true, T=Temp, Nexps=Nexps, N_measurements=N_repeats)
     end
-    lower = [1e-2, 1e0, 1e-4, 1e-12, 1e7, 1e1, 1e1, 1e2, -2e5]
-    upper = [1e2, 1e4, 1e2, 1e-8, 1e11, 1e5, 1e5, 1e6, -2e1]
-    par = k .* (upper .- lower) .+ lower
+    lower=[0.1,0.1,0.1,0.1,0.1,1e4,1e4,1e4,1e4] 
+    upper=[1e5, 1e4, 1e5, 1e5, 1e5, 1.5e5, 1.5e5, 1.5e5, 1.5e5]
+    par =  exp10.(log10.(lower) .+ k .* (log10.(upper) .- log10.(lower)))
     return par
 end
 
 #RUN this function to exectute the complete parameter estimation workflow 
 function complete_workflow(; Nexps=25, ratio=0.1, nparas=9, std_data=1e-6, RBS_full=false)
     St = [-1 -3 1 1 0 0; -1 -1 1 0 1 0]
-    P_total = 50
     nspec = size(St, 2)
     nreac = size(St, 1)
-    PreExp = [1.07, 3453.38, 0.499, 6.62e-11, 1.22e10, 40000, 17197, 124119, -98084]
-    lower = [1e-2, 1e0, 1e-4, 1e-12, 1e7, 1e1, 1e1, 1e2, -2e5]
-    upper = [1e2, 1e4, 1e2, 1e-8, 1e11, 1e5, 1e5, 1e6, -2e1]
-    PreExp = (PreExp .- lower) ./ (upper .- lower)
-    IG = PreExp * 0.5 #fill(0.1, 9)
-    Y_in, Temp = random_points_generator(Nexps=Nexps, nspecs=nspec, lb=[0.1, 0.1, 0.0, 0.0, 0.0, 450], ub=[0.33, 0.25, 0.01, 0.3, 0.01, 550], Sampling=HaltonSample())
+    Par = [15672.02, 3453.38, 30.836, 558.532, 0.7439, 40000, 17197, 124119, 98084]
+    lower=[0.1,0.1,0.1,0.1,0.1,1e4,1e4,1e4,1e4] 
+    upper=[1e5, 1e4, 1e5, 1e5, 1e5, 1.5e5, 1.5e5, 1.5e5, 1.5e5]
+    Par =  (log10.(Par) .- log10.(lower)) ./ (log10.(upper) .- log10.(lower))
+    IG = Par * 0.5 
+    Y_in, Temp, P_total = random_points_generator(Nexps=Nexps, nspecs=nspec, lb = [0.1, 0.1, 0.0, 0.0, 0.0, 450, 15], ub = [0.33, 0.25, 0.01, 0.01, 0.3, 550, 50], Sampling=HaltonSample())
     Y_out = experiments(; Y_in=Y_in, P_total=P_total, Temp=Temp, Nexps=Nexps, ratio=ratio, N_repeats=50, std_data=std_data, Nspec=nspec) #
     k = parameter_estimator(; ratio=ratio, nspec=nspec, Y_in=Y_in, Temp=Temp, P_total=P_total, St=St, nref=2500, nreac=nreac, Nexps=Nexps, Y_out=Y_out, unknown_parameters=nparas, IG=IG, N_repeats=50, σ_data=std_data, RBS_full=RBS_full)
     return k
 end
-
 
 end

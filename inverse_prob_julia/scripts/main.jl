@@ -5,7 +5,6 @@ using SimplexGridFactory
 using ExtendableGrids
 using VoronoiFVM
 using LinearAlgebra
-using NLsolve
 using TimerOutputs
 using LinearSolve, ExtendableSparse
 using Statistics

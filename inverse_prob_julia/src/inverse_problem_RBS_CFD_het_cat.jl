@@ -1,32 +1,38 @@
 module inverse_problem_RBS_CFD_het_cat 
 
-using NLsolve
+#using NLsolve
 using Statistics
 using LinearAlgebra
-using JuMP
-using SqpSolver, Ipopt
+using Optimization, OptimizationMOI, Ipopt, ForwardDiff
+#using JuMP
+using Zygote
+#using SqpSolver
 #using BilevelJuMP
 #using HiGHS
 using Distributions
 using QuasiMonteCarlo
 using ForwardDiff
-using FiniteDiff
-#using HSL
+#using FiniteDiff
+using HSL
 using SparseArrays
 using ExtendableGrids
 using Revise
 using DelimitedFiles
 using Serialization
-
+using DifferentialEquations
+using NonlinearSolve
+using TimerOutputs
+using PreallocationTools
+using Random
 using Optim
-using LeastSquaresOptim
+#using LeastSquaresOptim
 
-import Ipopt
+#import Ipopt
 import Random
 import Statistics
 import Test
 #import KNITRO
-#import HSL_jll
+import HSL_jll
 
 include("optimizer.jl")
 export compute_optimal_hessian
@@ -50,6 +56,7 @@ export reaction_parameters
 export youts
 export youts_rom
 export ycat
+export average_molar_weight
 
 include("rbs_sys.jl")
 export RBS_Snapshots
