@@ -134,7 +134,7 @@ function main(; nref=1, T=493, P_total=10, levels=1, RBS=false, St=0.0, ratio=0.
     h = 1.0 / convert(Float64, nref - 1)
     X = collect(0.0:h:L)
     Y = collect(0.0:h:H)
-    grid = VoronoiFVM.Grid(X, Y)
+    grid = simplexgrid(X, Y)
     bfacemask!(grid, [xsp * L, 0], [xep * L, 0], 5)
     bfacemask!(grid, [xep * L, 0], [L, 0], 6)
 
