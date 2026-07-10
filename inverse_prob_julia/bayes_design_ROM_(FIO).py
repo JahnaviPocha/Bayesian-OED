@@ -57,11 +57,11 @@ RATIO = 0.1
 STOICHIOMETRY = np.array([[-2.0, -1.0, 2.0]])
 
 N_REPEATS = 10
-NOISE_LEVELS = [1e-3, 1e-4, 1e-6]
+NOISE_LEVELS = [1e-3, 1e-5, 1e-7]
 
 N_INIT = 3
 MAX_EXPERIMENTS = 10
-N_CANDIDATES = 500
+N_CANDIDATES = 200
 
 # Keep False for fair noise-comparison plots. Set True for faster single runs.
 ALLOW_EARLY_STOP_IN_SWEEP = False
@@ -88,7 +88,7 @@ GP_ALPHA = 1e-8
 EI_XI = 0.01
 MIN_SCALED_DISTANCE = 0.03
 
-RBS_FULL = False
+RBS_FULL = True
 
 
 # ============================================================

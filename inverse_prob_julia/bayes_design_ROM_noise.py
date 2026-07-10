@@ -55,7 +55,7 @@ NOISE_LEVELS = [1e-3, 1e-4, 1e-5]
 
 N_INIT = 4
 MAX_EXPERIMENTS = 12
-N_CANDIDATES = 200
+N_CANDIDATES = 50
 CONVERGENCE_TOL = 1e-3
 
 # For a fair noise comparison, keep all noise levels on the same budget.
@@ -569,19 +569,32 @@ def apply_plain_k_axis(ax):
 def plot_all_experiments(all_results):
     plt.figure(figsize=(8, 5))
 
-    for result in all_results:
+    line_styles = ["-", "--", "-."]
+    markers = ["o", "s", "^"]
+    alphas = [1.0, 0.8, 0.6]
+
+    for i, result in enumerate(all_results):
         X = result["X"]
-        label = f"noise {noise_label(result['noise'])}, n={len(X)}"
-        plt.plot(X[:, 0], X[:, -1], marker="o", linewidth=1.5, label=label)
+
+        plt.plot(
+            X[:, 0],
+            X[:, -1],
+            linestyle=line_styles[i],
+            marker=markers[i],
+            linewidth=2,
+            markersize=6,
+            alpha=alphas[i],
+            label=f"noise {noise_label(result['noise'])}"
+        )
 
     plt.xlabel("Y1 (species 1)")
     plt.ylabel("Temperature (K)")
     plt.title("Experimental Designs Across Noise Levels")
-    plt.grid(True)
+
+    plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
     plt.show()
-
 
 def plot_all_parameter_convergence(all_results):
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharex=True)
