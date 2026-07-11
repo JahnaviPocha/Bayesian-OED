@@ -94,9 +94,9 @@ NOISE_LEVELS = [1e-3, 1e-5, 1e-7]
 
 # Methanol has 9 unknown parameters, so more experiments are usually needed
 # than the 2-parameter ROM case. These values are moderate for testing.
-N_INIT = 5
-MAX_EXPERIMENTS = 10
-N_CANDIDATES = 200
+N_INIT = 3
+MAX_EXPERIMENTS = 15
+N_CANDIDATES = 50
 
 # Keep False for fair noise-comparison plots.
 ALLOW_EARLY_STOP_IN_SWEEP = False

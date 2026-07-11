@@ -118,9 +118,9 @@ NOISE_LEVELS = [1e-3, 1e-5, 1e-7]
 # Methanol has 9 unknowns, so more experiments are needed than the ROM case.
 # Start modestly for testing because each selected point needs finite
 # differences through the Julia model.
-N_INIT = 5
-MAX_EXPERIMENTS = 10
-N_CANDIDATES = 200
+N_INIT = 3
+MAX_EXPERIMENTS = 15
+N_CANDIDATES = 50
 
 ALLOW_EARLY_STOP_IN_SWEEP = False
 CONVERGENCE_TOL = 1e-3

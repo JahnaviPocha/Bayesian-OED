@@ -244,17 +244,8 @@ function main(; nref=1, T=493, P_total=10, levels=1, RBS=false, St=0.0, ratio=0.
     Γ_catalyst = [5]
 
 
+    tsol = VoronoiFVM.solve(ysys; maxiters=1000, inival=initvalue, abstol=1e-12, reltol=0.0, verbose=false, tol_round=0.0, tol_mono=0.0, log=true, damp_initial=0.15) #, damp_grow = 1.2) #0.15,damp_grow = 1.5)
 
-    #bfaceindices = unique(arr_out)
-    #println(size(bnodes))
-
-    @info "Strategy: $(strategy)"
-    control = SolverControl(strategy, ysys)
-    @info control.method_linear
-    #method_linear = KrylovJL_BICGSTAB(), precon_linear = SA_AMGPreconditioner(), keepcurrent_linear = true,  tol_round=0.0, tol_mono=0.0, 
-    @timeit "Overall Time" begin
-        tsol = VoronoiFVM.solve(ysys; maxiters=1000, inival=initvalue, abstol=1e-12, reltol=0.0, verbose=false, tol_round=0.0, tol_mono=0.0, log=true, damp_initial=0.15) #, damp_grow = 1.2) #0.15,damp_grow = 1.5)
-    end
 
     factory = VoronoiFVM.TestFunctionFactory(ysys)
     tfc_rea = testfunction(factory, [Γ_inlet; Γ_outlet; [1]; [3]; [6]], [Γ_catalyst;])
