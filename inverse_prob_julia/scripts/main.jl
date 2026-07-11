@@ -1,9 +1,5 @@
-module Example_Inverse_Problem_Validation_2D
+
 using Revise
-using Triangulate
-using SimplexGridFactory
-using ExtendableGrids
-using VoronoiFVM
 using LinearAlgebra
 using TimerOutputs
 using LinearSolve, ExtendableSparse
@@ -11,16 +7,12 @@ using Statistics
 using Distributions
 using QuasiMonteCarlo
 using DelimitedFiles
-#using AMGCLWrap
-#using AlgebraicMultigrid
-#using GridVisualize
-#using Plots
-#using CairoMakie
 using inverse_problem_RBS_CFD_het_cat
-#using BenchmarkTools
 using LaTeXStrings
 using Serialization
 using Base.Threads
+using VoronoiFVM
+using ExtendableGrids
 import Random
 #include("ROM_Par_Sensitivity.jl")
 function mixture_average_diffusivity(D, inlet_mass_frac, molar_weights; nospec=6)
@@ -99,7 +91,7 @@ function L_BFs(xcoord, levels, λ, L)
 
 end
 
-function main(; nref=1, T=493, P_total=10, levels=1, RBS=false, St=0.0, ratio=0.01, Mtcat=1, initvalue=0.1, k0=0.0, Ea=0.0, RBS_full=false, catcell=1, inlet_MFs=[0.3, 0.7, 0.0], strategy=nothing, unknown_storage=:dense, assembly=:cellwise)
+function main(; scale=1.0, nref=1, T=493, P_total=10, levels=1, RBS=false, St=0.0, ratio=0.01, Mtcat=1, initvalue=0.1, k0=0.0, Ea=0.0, RBS_full=false, catcell=1, inlet_MFs=[0.3, 0.7, 0.0], strategy=nothing, unknown_storage=:dense, assembly=:cellwise)
     # parameters to be varied
     #T = T
     L = 0.1
@@ -134,7 +126,7 @@ function main(; nref=1, T=493, P_total=10, levels=1, RBS=false, St=0.0, ratio=0.
     h = 1.0 / convert(Float64, nref - 1)
     X = collect(0.0:h:L)
     Y = collect(0.0:h:H)
-    grid = simplexgrid(X, Y)
+    grid =  simplexgrid(X, Y)
     bfacemask!(grid, [xsp * L, 0], [xep * L, 0], 5)
     bfacemask!(grid, [xep * L, 0], [L, 0], 6)
 
@@ -147,7 +139,7 @@ function main(; nref=1, T=493, P_total=10, levels=1, RBS=false, St=0.0, ratio=0.
     #Di=rand(nospec)
     fill!(Di, 1e-5)
     function constant_diff_flux!(f, u, edge, data) #Need to revisit this with some shortcuts and exact types 
-        @timeit "Flux Time" begin
+     
 
             for i in 1:nospec
                 vd = evelo[edge.index] / Di[i]
@@ -155,7 +147,6 @@ function main(; nref=1, T=493, P_total=10, levels=1, RBS=false, St=0.0, ratio=0.
                 bm = fbernoulli(-vd)
                 f[i] = Di[i] * (bp * u[i, 1] - bm * u[i, 2])
             end
-        end
     end
 
     # function fitting_flux!(f, u, edge, data)
@@ -214,7 +205,7 @@ function main(; nref=1, T=493, P_total=10, levels=1, RBS=false, St=0.0, ratio=0.
                 #boundary_neumann!(y, u, node, species=i, region=5, value=(1 * molar_weights[i] / mixture_density * (St[1, i] * rf(u, k0; T, density=mixture_density, molar_weights=molar_weights)[1] + St[2, i] * rf(u, k0; T, density=mixture_density, molar_weights=molar_weights)[2])))#
 
                 #For Reactions Not Requiring Pressure Conversion
-                boundary_neumann!(y, u, node, species=i, region=5, value=((St[1, i] * rf(u, k0; T)[1])))#
+                boundary_neumann!(y, u, node, species=i, region=5, value=((St[1, i] * rf(u, k0; T, scale=scale)[1])))#
                 #boundary_neumann!(y, u, node, species=i, region=5, value=sum(1 * St_Rober[j, i] * rf(u, k0; T)[j] for j in 1:3))# + St[2, i] * rf(u, k0; T)[2])
 
                 #dirichlet condition for our inlet
@@ -244,17 +235,10 @@ function main(; nref=1, T=493, P_total=10, levels=1, RBS=false, St=0.0, ratio=0.
     Γ_catalyst = [5]
 
 
-
-    #bfaceindices = unique(arr_out)
-    #println(size(bnodes))
-
-    @info "Strategy: $(strategy)"
-    control = SolverControl(strategy, ysys)
-    @info control.method_linear
     #method_linear = KrylovJL_BICGSTAB(), precon_linear = SA_AMGPreconditioner(), keepcurrent_linear = true,  tol_round=0.0, tol_mono=0.0, 
-    @timeit "Overall Time" begin
+  
         tsol = VoronoiFVM.solve(ysys; maxiters=1000, inival=initvalue, abstol=1e-12, reltol=0.0, verbose=false, tol_round=0.0, tol_mono=0.0, log=true, damp_initial=0.15) #, damp_grow = 1.2) #0.15,damp_grow = 1.5)
-    end
+
 
     factory = VoronoiFVM.TestFunctionFactory(ysys)
     tfc_rea = testfunction(factory, [Γ_inlet; Γ_outlet; [1]; [3]; [6]], [Γ_catalyst;])
@@ -262,7 +246,7 @@ function main(; nref=1, T=493, P_total=10, levels=1, RBS=false, St=0.0, ratio=0.
     tfc_out = testfunction(factory, [Γ_inlet; Γ_catalyst; [1]; [3]; [6]], [Γ_outlet;])
 
     I = integrate(ysys, tfc_rea, tsol)
-    # Iin = integrate(ysys, tfc_in, tsol)
+    Iin = integrate(ysys, tfc_in, tsol)
     Iout = integrate(ysys, tfc_out, tsol)
 
     #print_timer()
@@ -308,23 +292,25 @@ function random_points_generator(; Nexps=3, nspecs=6, lb=[0.1, 0.2, 0.0, 0.0, 0.
     return Yin, Temp
 end
 
-function experiments(; Y_in, Temp, P_total, Nexps, ratio, N_repeats, std_data, Nspec, k_true)
-    St =  [-2 -1 2] #[-1 -3 1 1 0 0; -1 -1 1 0 1 0]
+function experiments(; scale, Y_in, Temp, P_total, Nexps, ratio, N_repeats, std_data, Nspec, k_true)
+    St = [-2 -1 2] #[-1 -3 1 1 0 0; -1 -1 1 0 1 0]
     P_total = P_total
-    molar_weights =[1.0,1.0,1.0]# [44.01, 2.016, 18.01528, 32.04, 28.01, 28.0134]
+    molar_weights = [1.0, 1.0, 1.0]# [44.01, 2.016, 18.01528, 32.04, 28.01, 28.0134]
     mixture_density = zeros(Nexps)
     Yexp = zeros(Nspec, Nexps)
     @info "Collecting Experimental Data using FOM CFD Simulations"
     @info "Total Number of Experiments is $Nexps"
     for i in 1:Nexps
-        mixture_density[i] = 1.0 #density_rechner(molar_weights, Y_in[:, i], P_total, Temp[i])
-        d = main(nref=2500, inlet_MFs=Y_in[:, i], ratio=ratio, St=St, k0=k_true, T=Temp[i]) #T + i * ΔT
+       mixture_density[i] = 1.0 #density_rechner(molar_weights, Y_in[:, i], P_total, Temp[i])
+        d = main(nref=2500, scale=scale, inlet_MFs=Y_in[:, i], ratio=ratio, St=St, k0=k_true, T=Temp[i]) #T + i * ΔT
         Yout = youts(d, Nspec=Nspec) #yout_weighted(d;Nspecs=Nspec) #
         for j in 1:Nspec
             Yexp[j, i] = Yout[j]
         end
     end
     σ_data = std_data
+   # serialize("Yexp.jls", Yexp)
+    #Yexp=deserialize("job_scripts/Yexp.jls")
     Yexp_with_Error = Array{Float64}(undef, N_repeats, Nspec, Nexps)
     for i in 1:Nexps
         for n in 1:Nspec
@@ -335,19 +321,17 @@ function experiments(; Y_in, Temp, P_total, Nexps, ratio, N_repeats, std_data, N
     return Yexp_with_Error
 end
 
-function parameter_estimator(; ratio, nspec, Y_in, Temp, P_total, St, nref=2500, nreac, Nexps, Y_out, unknown_parameters, IG, N_repeats, σ_data, RBS_full=false)
-    @show typeof(IG)
-    @show typeof(Y_out)
+function parameter_estimator(; scale, ratio, nspec, Y_in, Temp, P_total, St, nref=2500, nreac, Nexps, Y_out, unknown_parameters, IG, N_repeats, σ_data, RBS_full=false)
     single_snapshot_A = []
     single_snapshot_B = []
     rbs_snapshot = []
     srbs_time = 0.0
     rbs_time = 0.0
-    mixture_density = zeros(Nexps)
+    mixture_density = ones(Nexps)
     X = fill(σ_data, nspec)
     V = (Diagonal(X) .^ 2) #./ 12 
     @info "Evaluating Kinetic Parameters"
-    molar_weights = [1.0,1.0,1.0]#[44.01, 2.016, 18.01528, 32.04, 28.01, 28.0134]
+    molar_weights = [1.0, 1.0, 1.0]#[44.01, 2.016, 18.01528, 32.04, 28.01, 28.0134]
     B_RBS = 0.0
     for j in 1:Nexps
         srbs = @timed A, B = Inverse_Problem_Paras(; nref=nref, ratio=ratio, nspec=nspec, inlet_MFs=Y_in[:, j], T=Temp[j], St=St)
@@ -357,42 +341,54 @@ function parameter_estimator(; ratio, nspec, Y_in, Temp, P_total, St, nref=2500,
         # #srbs_time += srbs.time
         if RBS_full == true
             @info "Conducting Offline Step for Full Reduced Basis"
-            rbs = @timed B_RBS = RBS_Snapshots(main; nref=nref, ratio=ratio, St=St, Nexps=Nexps, nspec=nspec, nreac=nreac, inlet_MFs=Y_in[:, j], T=Temp[j])
-            push!(rbs_snapshot, B_RBS)
-            rbs_time += rbs.time
+            B_RBS = RBS_Snapshots(main; nref=nref, ratio=ratio, P_total=P_total, St=St, Nexps=Nexps, nspec=nspec, nreac=nreac, inlet_MFs=Y_in[:, j], T=Temp[j])
+            push!(rbs_snapshot, B_RBS)           
         else
             B_RBS = 0.0
         end
     end
 
+    # serialize("job_scripts/rbs_snapshot.jls", rbs_snapshot)
+    # serialize("job_scripts/single_snapshot_A.jls", single_snapshot_A)
+    # serialize("job_scripts/single_snapshot_B.jls", single_snapshot_B)
+    # rbs_snapshot=deserialize("job_scripts/rbs_snapshot.jls")
+    # single_snapshot_A=deserialize("job_scripts/single_snapshot_A.jls")
+    # single_snapshot_B=deserialize("job_scripts/single_snapshot_B.jls")
+
     if RBS_full == true
         @info "Estimating Parameters using RBS"
-        k, _ = newton_optimizer(single_snapshot_A, single_snapshot_B, Y_in, Y_out; mixture_density=mixture_density, Initial_Guess=IG, molar_weights=molar_weights, B_RBS=rbs_snapshot, st=St, cov=V, dof=unknown_parameters, RBS=true, print=true, lm=true, T=Temp, Nexps=Nexps, N_measurements=N_repeats)
+        # kUC, _ = newton_optimizer(single_snapshot_A, single_snapshot_B, Y_in, Y_out; Fwd=false, Mw_avg=mixture_density, mixture_density=mixture_density, molar_weights=molar_weights, Initial_Guess=IG, B_RBS=B_RBS, st=St, std_dev=σ_data, cov=V, dof=unknown_parameters, RBS=false, print=true, lm=true, T=Temp, Nexps=Nexps, N_measurements=N_repeats)
+        # IG = [x == 0.0 ? 0.0001 : x for x in kUC]
+        k, _ = newton_optimizer(single_snapshot_A, single_snapshot_B, Y_in, Y_out;  Mw_avg=mixture_density, mixture_density=mixture_density, scale=scale, Initial_Guess=IG, molar_weights=molar_weights, B_RBS=rbs_snapshot, st=St, cov=V, dof=unknown_parameters, RBS=true, print=true, lm=true, T=Temp, Nexps=Nexps, N_measurements=N_repeats)
     else
         @info "Estimating Parameters using Single Reduced Basis with Forward Solver"
-        k, _ = newton_optimizer(single_snapshot_A, single_snapshot_B, Y_in, Y_out; Fwd=true, mixture_density=mixture_density, molar_weights=molar_weights, Initial_Guess=IG, B_RBS=B_RBS, st=St, cov=V, dof=unknown_parameters, RBS=false, print=true, lm=true, T=Temp, Nexps=Nexps, N_measurements=N_repeats)
-    end 
+        k, _ = newton_optimizer(single_snapshot_A, single_snapshot_B, Y_in, Y_out; Fwd=true,  Mw_avg=mixture_density, scale=scale, mixture_density=mixture_density, molar_weights=molar_weights, Initial_Guess=IG, B_RBS=B_RBS, st=St, cov=V, dof=unknown_parameters, RBS=false, print=true, lm=true, T=Temp, Nexps=Nexps, N_measurements=N_repeats)
+    end
 
-    par = k 
+    par = k
 
     return par
 end
 
 #RUN this function to exectute the complete parameter estimation workflow 
-function complete_workflow(; Nexps=5, ratio=0.1, nparas=2, std_data=1e-6, RBS_full=false) 
-    St=[-2 -1 2]
+function complete_workflow(; scale=1.0, Nexps=5, ratio=0.1, nparas=2, std_data=1e-6, RBS_full=false)
+    St = [-2 -1 2]
     P_total = 50
     nspec = size(St, 2)
     nreac = size(St, 1)
     @info "computing the experiments"
-    k_true=[4000.0,4000.0]
-    Y_in, Temp = random_points_generator(Nexps=Nexps, nspecs=nspec, lb=[0.1, 0.1, 300], ub=[0.5, 0.5, 600], Sampling=HaltonSample())
-    Y_out = experiments(; Y_in=Y_in, P_total=P_total, Temp=Temp, Nexps=Nexps, ratio=ratio, N_repeats=50, std_data=std_data, Nspec=nspec, k_true=k_true) #
+    k_true = [4000.0, 4000.0]
+     @show Y_in, Temp = random_points_generator(Nexps=Nexps, nspecs=nspec, lb=[0.1, 0.1, 300], ub=[0.5, 0.5, 600], Sampling=LatinHypercubeSample())
+    # in=Y_in,Temp
+   # Y_in, Temp=deserialize("job_scripts/Y_in.jls")
+    Y_out =  experiments(; scale=scale, Y_in=Y_in, P_total=P_total, Temp=Temp, Nexps=Nexps, ratio=ratio, N_repeats=50, std_data=std_data, Nspec=nspec, k_true=k_true) #
     @info "estimating paremeters"
     IG = fill(0.1, 2)
-    k = parameter_estimator(; ratio=ratio, nspec=nspec, Y_in=Y_in, Temp=Temp, P_total=P_total, St=St, nref=2500, nreac=nreac, Nexps=Nexps, Y_out=Y_out, unknown_parameters=nparas, IG=IG, N_repeats=50, σ_data=std_data, RBS_full=RBS_full)
-    return k
+    k = parameter_estimator(; scale=scale, ratio=ratio, nspec=nspec, Y_in=Y_in, Temp=Temp, P_total=P_total, St=St, nref=2500, nreac=nreac, Nexps=Nexps, Y_out=Y_out, unknown_parameters=nparas, IG=IG, N_repeats=50, σ_data=std_data, RBS_full=RBS_full)
+    #k_pfr = PFR_parameter_estimator(; scale=scale, nspec=nspec, Y_in=Y_in, Temp=Temp, P_total=P_total, St=St, nreac=nreac, Nexps=Nexps, Y_out=Y_out, unknown_parameters=nparas, IG=IG, N_repeats=50, σ_data=std_data)
+    
+    return k#, k_pfr
 end
 
+#complete_workflow(; scale=1.0, Nexps=5, ratio=0.1, nparas=2, std_data=10.0^(-4.0), RBS_full=false)
 
-end
