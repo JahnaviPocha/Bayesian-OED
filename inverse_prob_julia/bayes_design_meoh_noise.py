@@ -60,12 +60,6 @@ P_TOTAL = 50
 RATIO = 0.1
 N_REPEATS = 10
 
-ST = np.array(
-    [
-        [-1.0, -3.0, 1.0, 1.0, 0.0, 0.0],
-        [-1.0, -1.0, 1.0, 0.0, 1.0, 0.0],
-    ]
-)
 
 # Physical methanol parameters from main_meoh.jl.
 TRUE_PARAMS = np.array(
@@ -109,7 +103,7 @@ EI_XI = 0.01
 # RBS_full=true appears incomplete in main_meoh.jl because rbs_snapshot is not
 # filled before being passed to newton_optimizer. main_meoh complete_workflow()
 # uses RBS_full=false, so that is the safe default here too.
-RBS_FULL = False
+RBS_FULL = True
 
 
 
@@ -198,6 +192,7 @@ def run_experiment(x, noise_level):
         N_repeats=N_REPEATS,
         std_data=noise_level,
         Nspec=NSPEC,
+        scale=1.0,
     )
 
     Yexp = validate_yexp_shape(Yexp, nexps_expected=1)
@@ -240,7 +235,10 @@ def estimate_parameters(X, Y_outputs, noise_level):
         "Y_in": Y_in_all,
         "Temp": Temp_all,
         "P_total": P_TOTAL,
-        "St": ST,
+        "St": np.array([
+            [-1.0, -3.0, 1.0, 1.0, 0.0, 0.0],
+            [-1.0, -1.0, 1.0, 0.0, 1.0, 0.0]
+        ]),
         "nref": 2500,
         "nreac": N_REACTIONS,
         "Nexps": Nexps,
@@ -250,6 +248,7 @@ def estimate_parameters(X, Y_outputs, noise_level):
         "N_repeats": N_REPEATS,
         "\u03c3_data": noise_level,
         "RBS_full": RBS_FULL,
+        "scale": 1.0,
     }
 
     params_physical = parameter_estimator(**kwargs)

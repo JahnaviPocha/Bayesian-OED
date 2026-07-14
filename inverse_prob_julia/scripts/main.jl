@@ -1,4 +1,4 @@
-
+module Example_Inverse_Problem_Validation_2D
 using Revise
 using LinearAlgebra
 using TimerOutputs
@@ -91,7 +91,7 @@ function L_BFs(xcoord, levels, λ, L)
 
 end
 
-function main(; scale=1.0, nref=1, T=493, P_total=10, levels=1, RBS=false, St=0.0, ratio=0.01, Mtcat=1, initvalue=0.1, k0=0.0, Ea=0.0, RBS_full=false, catcell=1, inlet_MFs=[0.3, 0.7, 0.0], strategy=nothing, unknown_storage=:dense, assembly=:cellwise)
+function main(; scale=1.0, nref=1, vel=0.15, T=493, P_total=10, levels=1, RBS=false, St=0.0, ratio=0.01, Mtcat=1, initvalue=0.1, k0=0.0, Ea=0.0, RBS_full=false, catcell=1, inlet_MFs=[0.3, 0.7, 0.0], strategy=nothing, unknown_storage=:dense, assembly=:cellwise)
     # parameters to be varied
     #T = T
     L = 0.1
@@ -235,13 +235,10 @@ function main(; scale=1.0, nref=1, T=493, P_total=10, levels=1, RBS=false, St=0.
     Γ_catalyst = [5]
 
 
-<<<<<<< HEAD
     tsol = VoronoiFVM.solve(ysys; maxiters=1000, inival=initvalue, abstol=1e-12, reltol=0.0, verbose=false, tol_round=0.0, tol_mono=0.0, log=true, damp_initial=0.15) #, damp_grow = 1.2) #0.15,damp_grow = 1.5)
-=======
+
     #method_linear = KrylovJL_BICGSTAB(), precon_linear = SA_AMGPreconditioner(), keepcurrent_linear = true,  tol_round=0.0, tol_mono=0.0, 
-  
-        tsol = VoronoiFVM.solve(ysys; maxiters=1000, inival=initvalue, abstol=1e-12, reltol=0.0, verbose=false, tol_round=0.0, tol_mono=0.0, log=true, damp_initial=0.15) #, damp_grow = 1.2) #0.15,damp_grow = 1.5)
->>>>>>> f50b8d30fb40e3dbf47db499ea42d4ee2376cb0c
+
 
 
     factory = VoronoiFVM.TestFunctionFactory(ysys)
@@ -345,7 +342,7 @@ function parameter_estimator(; scale, ratio, nspec, Y_in, Temp, P_total, St, nre
         # #srbs_time += srbs.time
         if RBS_full == true
             @info "Conducting Offline Step for Full Reduced Basis"
-            B_RBS = RBS_Snapshots(main; nref=nref, ratio=ratio, P_total=P_total, St=St, Nexps=Nexps, nspec=nspec, nreac=nreac, inlet_MFs=Y_in[:, j], T=Temp[j])
+            B_RBS = RBS_Snapshots(main; nref=nref, vel=0.15, ratio=ratio, P_total=P_total, St=St, Nexps=Nexps, nspec=nspec, nreac=nreac, inlet_MFs=Y_in[:, j], T=Temp[j])
             push!(rbs_snapshot, B_RBS)           
         else
             B_RBS = 0.0
@@ -395,4 +392,4 @@ function complete_workflow(; scale=1.0, Nexps=5, ratio=0.1, nparas=2, std_data=1
 end
 
 #complete_workflow(; scale=1.0, Nexps=5, ratio=0.1, nparas=2, std_data=10.0^(-4.0), RBS_full=false)
-
+end

@@ -162,6 +162,7 @@ def run_experiment(x, noise_level, n_repeats):
         std_data=noise_level,
         Nspec=NSPEC,
         k_true=TRUE_K.tolist(),
+        scale=1.0,
     )
 
     Yexp = validate_yexp_shape(Yexp, nexps_expected=1, n_repeats=n_repeats)
@@ -232,6 +233,8 @@ def estimate_parameters(
         "N_repeats": n_repeats,
         "\u03c3_data": noise_level,
         "RBS_full": True,
+        "scale": 1.0,
+        #"vel": 1.0,
     }
 
     params = parameter_estimator(**kwargs)

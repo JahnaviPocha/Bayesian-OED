@@ -1,8 +1,8 @@
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.12.6"
+julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "8a16bd2163d53bcc1c849292dc88cfb86af0d123"
+project_hash = "03df96a63a571a8fdf0db7196e5fc88102f4bc4b"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "d9aaef7c63466eee4de23b4d9dad03629df54bea"
@@ -3193,7 +3193,7 @@ uuid = "28df3c45-c428-5900-9ff8-a3135698ca75"
 version = "1.79.0+3"
 
 [[deps.inverse_problem_RBS_CFD_het_cat]]
-deps = ["AMGCLWrap", "AlgebraicMultigrid", "BilevelJuMP", "CSV", "DataFrames", "DelimitedFiles", "DiffEqNoiseProcess", "DifferentialEquations", "Distributions", "ExtendableGrids", "ExtendableSparse", "ForwardDiff", "GaussNewton", "HSL", "HSL_jll", "Interpolations", "Ipopt", "LaTeXStrings", "LinearAlgebra", "LinearOperators", "LinearSolve", "LsqFit", "MatrixMarket", "NLSolversBase", "NonlinearSolve", "Optim", "Optimization", "OptimizationMOI", "PreallocationTools", "QuasiMonteCarlo", "Random", "Revise", "Serialization", "SimplexGridFactory", "SlurmClusterManager", "SparseArrays", "Statistics", "Test", "TimerOutputs", "Triangulate", "UnicodePlots", "VoronoiFVM", "Zygote"]
+deps = ["AMGCLWrap", "AlgebraicMultigrid", "BilevelJuMP", "CSV", "DataFrames", "DelimitedFiles", "DiffEqNoiseProcess", "DifferentialEquations", "Distributions", "ExtendableGrids", "ExtendableSparse", "ForwardDiff", "GaussNewton", "HSL_jll", "Interpolations", "Ipopt", "LaTeXStrings", "LinearAlgebra", "LinearOperators", "LinearSolve", "LsqFit", "MatrixMarket", "NLSolversBase", "NonlinearSolve", "Optim", "Optimization", "OptimizationMOI", "PreallocationTools", "QuasiMonteCarlo", "Random", "Revise", "Serialization", "SimplexGridFactory", "SlurmClusterManager", "SparseArrays", "Statistics", "Test", "TimerOutputs", "Triangulate", "UnicodePlots", "VoronoiFVM", "Zygote"]
 path = "."
 uuid = "5292d7b8-7a55-4aef-9545-69efce1dac8e"
 version = "0.1.0"

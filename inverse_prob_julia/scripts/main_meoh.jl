@@ -97,7 +97,7 @@ function L_BFs(xcoord, levels, λ, L)
 
 end
 
-function main(; nref=1, T=493, P_total=10, levels=1, RBS=false, St=0.0, ratio=0.01, Mtcat=1, initvalue=0.1, k0=0.0, Ea=0.0, RBS_full=false, catcell=1, inlet_MFs=[0.3, 0.7, 0.0], strategy=nothing, unknown_storage=:dense, assembly=:cellwise)
+function main(; scale=1.0, nref=1, vel=0.15, T=493, P_total=10, levels=1, RBS=false, St=0.0, ratio=0.01, Mtcat=1, initvalue=0.1, k0=0.0, Ea=0.0, RBS_full=false, catcell=1, inlet_MFs=[0.3, 0.7, 0.0], strategy=nothing, unknown_storage=:dense, assembly=:cellwise)
     # parameters to be varied
     #T = T
     L = 0.1
@@ -209,7 +209,7 @@ function main(; nref=1, T=493, P_total=10, levels=1, RBS=false, St=0.0, ratio=0.
                 boundary_dirichlet!(y, u, node, species=i, region=4, value=0.0)#inlet_mol_frac#[i])
             else
                 #For Reactions Requiring Pressure Conversion
-                boundary_neumann!(y, u, node, species=i, region=5, value=(1 * molar_weights[i] / mixture_density * (St[1, i] * rf(u, k0; T, density=mixture_density, molar_weights=molar_weights)[1] + St[2, i] * rf(u, k0; T, density=mixture_density, molar_weights=molar_weights)[2])))#
+                boundary_neumann!(y, u, node, species=i, region=5, value=(1 * molar_weights[i] / mixture_density * (St[1, i] * rf(u, k0; T, scale=scale, density=mixture_density, molar_weights=molar_weights)[1] + St[2, i] * rf(u, k0; T, density=mixture_density, molar_weights=molar_weights)[2])))#
 
                 #For Reactions Not Requiring Pressure Conversion
                 #boundary_neumann!(y, u, node, species=i, region=5, value=((St[1, i] * rf(u, k0; T)[1])))#
@@ -297,7 +297,7 @@ function random_points_generator(; Nexps=3, nspecs=6, lb=[0.1, 0.2, 0.0, 0.0, 0.
     return Yin, Temp, P
 end
 
-function experiments(; Y_in, Temp, P_total, Nexps, ratio, N_repeats, std_data, Nspec)
+function experiments(; scale, Y_in, Temp, P_total, Nexps, ratio, N_repeats, std_data, Nspec)
     St_Methanol = [-1 -3 1 1 0 0; -1 -1 1 0 1 0]
     St = St_Methanol
     P_total = P_total
@@ -315,7 +315,7 @@ function experiments(; Y_in, Temp, P_total, Nexps, ratio, N_repeats, std_data, N
     for i in 1:Nexps
         k_meth_rxn = PreExp#vcat(PreExp, InExp)#reaction_parameters(PreExp, InExp; T=Temp[i]) #
         mixture_density[i] = density_rechner(molar_weights, Y_in[:, i], P_total[i], Temp[i])
-        d = main(nref=2500, inlet_MFs=Y_in[:, i], ratio=ratio, St=St, k0=k_meth_rxn, T=Temp[i], P_total=P_total[i]) #T + i * ΔT 
+        d = main(nref=2500, scale=scale, inlet_MFs=Y_in[:, i], ratio=ratio, St=St, k0=k_meth_rxn, T=Temp[i], P_total=P_total[i]) #T + i * ΔT 
         Yout = youts(d, Nspec=Nspec) #yout_weighted(d;Nspecs=Nspec) #
         for j in 1:Nspec
             Yexp[j, i] = Yout[j]
@@ -334,7 +334,7 @@ function experiments(; Y_in, Temp, P_total, Nexps, ratio, N_repeats, std_data, N
     return Yexp_with_Error
 end
 
-function parameter_estimator(; ratio, nspec, Y_in, Temp, P_total, St, nref=2500, nreac, Nexps, Y_out, unknown_parameters, IG, N_repeats, σ_data, RBS_full=false)
+function parameter_estimator(; scale, ratio, nspec, Y_in, Temp, P_total, St, nref=2500, nreac, Nexps, Y_out, unknown_parameters, IG, N_repeats, σ_data, RBS_full=false)
     single_snapshot_A = []
     single_snapshot_B = []
     rbs_snapshot = []
@@ -356,7 +356,7 @@ function parameter_estimator(; ratio, nspec, Y_in, Temp, P_total, St, nref=2500,
         # #srbs_time += srbs.time
         if RBS_full == true
             @info "Conducting Offline Step for Full Reduced Basis"
-            B_RBS = RBS_Snapshots(main; nref=nref, ratio=ratio, St=St, Nexps=Nexps, nspec=nspec, nreac=nreac, inlet_MFs=Y_in[:, j], T=Temp[j], P_total=P_total[j])
+            B_RBS = RBS_Snapshots(main; nref=nref, vel=0.15, ratio=ratio, St=St, Nexps=Nexps, nspec=nspec, nreac=nreac, inlet_MFs=Y_in[:, j], T=Temp[j], P_total=P_total[j])
         else
             B_RBS = 0.0
         end
@@ -375,7 +375,7 @@ function parameter_estimator(; ratio, nspec, Y_in, Temp, P_total, St, nref=2500,
 end
 
 #RUN this function to exectute the complete parameter estimation workflow 
-function complete_workflow(; Nexps=25, ratio=0.1, nparas=9, std_data=1e-6, RBS_full=false)
+function complete_workflow(; scale=1.0, Nexps=25, ratio=0.1, nparas=9, std_data=1e-6, RBS_full=false)
     St = [-1 -3 1 1 0 0; -1 -1 1 0 1 0]
     nspec = size(St, 2)
     nreac = size(St, 1)
@@ -385,8 +385,8 @@ function complete_workflow(; Nexps=25, ratio=0.1, nparas=9, std_data=1e-6, RBS_f
     Par =  (log10.(Par) .- log10.(lower)) ./ (log10.(upper) .- log10.(lower))
     IG = Par * 0.5 
     Y_in, Temp, P_total = random_points_generator(Nexps=Nexps, nspecs=nspec, lb = [0.1, 0.1, 0.0, 0.0, 0.0, 450, 15], ub = [0.33, 0.25, 0.01, 0.01, 0.3, 550, 50], Sampling=HaltonSample())
-    Y_out = experiments(; Y_in=Y_in, P_total=P_total, Temp=Temp, Nexps=Nexps, ratio=ratio, N_repeats=50, std_data=std_data, Nspec=nspec) #
-    k = parameter_estimator(; ratio=ratio, nspec=nspec, Y_in=Y_in, Temp=Temp, P_total=P_total, St=St, nref=2500, nreac=nreac, Nexps=Nexps, Y_out=Y_out, unknown_parameters=nparas, IG=IG, N_repeats=50, σ_data=std_data, RBS_full=RBS_full)
+    Y_out = experiments(; scale=scale, Y_in=Y_in, P_total=P_total, Temp=Temp, Nexps=Nexps, ratio=ratio, N_repeats=50, std_data=std_data, Nspec=nspec) #
+    k = parameter_estimator(; scale=scale, ratio=ratio, nspec=nspec, Y_in=Y_in, Temp=Temp, P_total=P_total, St=St, nref=2500, nreac=nreac, Nexps=Nexps, Y_out=Y_out, unknown_parameters=nparas, IG=IG, N_repeats=50, σ_data=std_data, RBS_full=RBS_full)
     return k
 end
 
