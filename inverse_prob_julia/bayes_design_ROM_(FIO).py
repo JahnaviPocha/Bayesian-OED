@@ -34,6 +34,8 @@ from sklearn.gaussian_process.kernels import ConstantKernel as C
 from sklearn.gaussian_process.kernels import RBF
 
 from call_to_KPE_code import experiments, parameter_estimator
+import concurrent.futures
+import os
 
 
 # ============================================================
@@ -608,33 +610,69 @@ def BO(
 
     print("\n=== BO START ===")
 
+        # --- inside BO, replace the while-loop body with this ---
+    use_parallel = True  # set False if Julia bridge is not process-safe
+    max_workers_override = None  # set to an int to limit workers, else None
+
     while len(X) < max_experiments:
         gp = train_gp(X, y_info)
-        x_new = select_next_experiment(
-            gp,
-            X,
-            y_info,
-            rng=rng,
-            n_candidates=n_candidates,
-        )
+        X_candidates = generate_candidates(n_candidates=n_candidates, rng=rng)
+        X_candidates = filter_far_candidates(X_candidates, X)
 
-        info_new, F_new = point_information_objective(
-            x_new,
-            noise_level=noise_level,
-            k_ref=NOMINAL_K_FOR_INFORMATION,
-        )
-        target_new, Yexp_new = run_noisy_experiment(x_new, noise_level=noise_level)
+        ei = expected_improvement(X_candidates, gp, np.max(y_info))
+        sorted_idx = np.argsort(ei)[::-1]
+        X_batch = X_candidates[sorted_idx]
 
-        X = np.vstack([X, x_new])
-        y_info = np.append(y_info, info_new)
-        y_target = np.append(y_target, target_new)
-        F_matrices.append(F_new)
+        # Optionally limit to top-k candidates to reduce cost:
+        # k = 20
+        # X_batch = X_batch[:k]
+
+        print(f"\n--- BO Iteration: selecting {len(X_batch)} candidates to evaluate ---")
+
+        args_iterable = [(x_next, noise_level) for x_next in X_batch]
+
+        y_new_list = []
+        Yexp_new_list = []
+
+        if use_parallel and len(X_batch) > 1:
+            cpu_count = os.cpu_count() or 1
+            max_workers = max_workers_override or max(1, cpu_count - 1)
+            max_workers = min(max_workers, len(X_batch))
+
+            try:
+                with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+                    # executor.map keeps order consistent with X_batch
+                    for y_next, Yexp_next in executor.map(lambda args: run_noisy_experiment(*args), args_iterable):
+                        y_new_list.append(y_next)
+                        Yexp_new_list.append(Yexp_next)
+                        print(f"  Candidate done: target={y_next:.6f}")
+            except Exception as e:
+                # Fallback to serial if parallel execution fails
+                print("Parallel execution failed, falling back to serial. Error:", e)
+                for x_next in X_batch:
+                    y_next, Yexp_next = run_noisy_experiment(x_next, noise_level=noise_level)
+                    y_new_list.append(y_next)
+                    Yexp_new_list.append(Yexp_next)
+                    print(f"  Candidate done (serial): target={y_next:.6f}")
+        else:
+            for x_next in X_batch:
+                y_next, Yexp_next = run_noisy_experiment(x_next, noise_level=noise_level)
+                y_new_list.append(y_next)
+                Yexp_new_list.append(Yexp_next)
+                print(f"  Candidate done (serial): target={y_next:.6f}")
+
+        # Update data once per iteration
+        X = np.vstack([X, X_batch])
+        y_info = np.append(y_info, np.asarray([point_information_objective(x, noise_level)[0] for x in X_batch]))
+        y_target = np.append(y_target, y_new_list)
+        F_matrices.extend([point_information_objective(x, noise_level)[1] for x in X_batch])
         Y_full = validate_yexp_shape(
-            np.concatenate((Y_full, Yexp_new), axis=2),
+            np.concatenate([Y_full] + Yexp_new_list, axis=2),
             nexps_expected=len(X),
             name="Y_full",
         )
 
+        # Parameter estimation (warm-start)
         k = estimate_parameters_from_observations(
             X,
             Y_full,
@@ -646,17 +684,17 @@ def BO(
         total_info_history.append(cumulative_information_gain(F_matrices))
 
         print("\n--------------------------------")
-        print(f"Experiment {len(X)}")
+        print(f"Experiment {len(X)} (batch update)")
         print("--------------------------------")
-        print("New design =", x_new)
-        print(f"Point information = {info_new:.6f}")
+        print(f"New designs evaluated: {len(X_batch)}")
         print(f"Cumulative information = {total_info_history[-1]:.6f}")
-        print(f"Target output = {target_new:.6f}")
+        print(f"Target outputs (last batch): {y_new_list[:5]} ...")
         print("Estimated k =", k)
 
         if allow_early_stop and check_parameter_convergence(param_history, tol):
             print("\nConvergence reached -> stopping early.")
             break
+
 
     return {
         "X": X,
@@ -758,29 +796,47 @@ def plot_k_convergence_all(results):
 
 
 def plot_parameter_error(results):
-    plt.figure(figsize=(9, 6))
-
+    # 1) Norm of absolute error (combined)
+    plt.figure(figsize=(9, 5))
     for noise, data in results.items():
         params = data["param_history"]
         exp_counts = data["param_exp_counts"]
-        errors = np.linalg.norm(params - TRUE_K, axis=1) / np.linalg.norm(TRUE_K)
-
-        plt.plot(
-            exp_counts,
-            errors,
-            marker="o",
-            linewidth=2,
-            label=f"sigma={_noise_label(noise)}",
-        )
+        abs_norm = np.linalg.norm(params - TRUE_K, axis=1)  # Euclidean absolute error
+        plt.plot(exp_counts, abs_norm, marker="o", linewidth=2, label=f"sigma={_noise_label(noise)}")
 
     plt.yscale("log")
     plt.xlabel("Total experiments used")
-    plt.ylabel("Relative parameter error")
-    plt.title("Parameter Error Convergence")
+    plt.ylabel("Absolute parameter error (Euclidean norm)")
+    plt.title("Absolute Parameter Error (norm) Convergence")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
     plt.show()
+
+    # 2) Per-parameter absolute errors
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4), sharex=True)
+    for noise, data in results.items():
+        params = data["param_history"]
+        exp_counts = data["param_exp_counts"]
+        abs_err_k1 = np.abs(params[:, 0] - TRUE_K[0])
+        abs_err_k2 = np.abs(params[:, 1] - TRUE_K[1])
+
+        axes[0].plot(exp_counts, abs_err_k1, marker="o", linewidth=2, label=f"sigma={_noise_label(noise)}")
+        axes[1].plot(exp_counts, abs_err_k2, marker="s", linewidth=2, label=f"sigma={_noise_label(noise)}")
+
+    for i, ax in enumerate(axes):
+        ax.set_xlabel("Total experiments used")
+        ax.set_ylabel(f"|error in k{i + 1}|")
+        ax.set_title(f"Absolute Parameter Error: k{i + 1}")
+        ax.grid(True)
+        # show both small and large errors
+        ax.set_yscale("symlog", linthresh=1e-6)
+        _apply_plain_axis(ax)
+
+    axes[0].legend()
+    fig.tight_layout()
+    plt.show()
+
 
 
 def plot_information_gain(results):

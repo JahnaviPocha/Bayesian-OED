@@ -5,7 +5,6 @@ Created on Sun Apr 26 11:02:33 2026
 @author: jahna
 """
 
-
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
@@ -13,7 +12,8 @@ from scipy.stats import norm
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel as C
 from sklearn.gaussian_process.kernels import RBF
-
+import concurrent.futures
+import os
 
 # ============================================================
 # JULIA INTERFACE
@@ -55,7 +55,7 @@ NOISE_LEVELS = [1e-3, 1e-4, 1e-5]
 
 N_INIT = 4
 MAX_EXPERIMENTS = 12
-N_CANDIDATES = 200
+N_CANDIDATES = 50
 CONVERGENCE_TOL = 1e-3
 
 # For a fair noise comparison, keep all noise levels on the same budget.
@@ -162,6 +162,7 @@ def run_experiment(x, noise_level, n_repeats):
         std_data=noise_level,
         Nspec=NSPEC,
         k_true=TRUE_K.tolist(),
+        scale=1.0,
     )
 
     Yexp = validate_yexp_shape(Yexp, nexps_expected=1, n_repeats=n_repeats)
@@ -232,6 +233,8 @@ def estimate_parameters(
         "N_repeats": n_repeats,
         "\u03c3_data": noise_level,
         "RBS_full": False,
+        "scale": 1.0,
+        #"vel": 1.0,
     }
 
     params = parameter_estimator(**kwargs)
@@ -449,36 +452,69 @@ def bayesian_optimization(
 
     print(f"Initial parameters: {params}")
 
+        # --- inside bayesian_optimization, replace the for-loop body with this ---
+    use_parallel = True  # set False to force serial execution if Julia calls are not process-safe
+
     for iteration in range(max_experiments - N_init):
         print(f"\n--- BO Iteration {iteration + 1} ---")
 
         gp = build_gp_model(X, y, noise_level, n_repeats)
-        x_next = select_next_experiment(
-            gp,
-            X,
-            y,
-            rng=rng,
-            n_candidates=n_candidates,
-        )
 
-        y_next, Yexp_next = run_experiment(x_next, noise_level, n_repeats)
+        # Generate candidate batch and compute EI
+        X_candidates = generate_candidates(n_candidates=n_candidates, rng=rng)
+        y_best = np.max(y)
+        ei = expected_improvement(X_candidates, gp, y_best)
 
-        print("New experiment:")
-        print(f"  x = {x_next}")
-        print(f"  target output = {y_next:.6f}")
+        # Sort candidates by EI descending (optional)
+        sorted_idx = np.argsort(ei)[::-1]
+        X_batch = X_candidates[sorted_idx]
 
-        X = np.vstack((X, x_next))
-        y = np.append(y, y_next)
+        print(f"Running {len(X_batch)} candidate experiments (batch) ...")
+
+        # Prepare evaluation args
+        args_iterable = [(x_next, noise_level, n_repeats) for x_next in X_batch]
+
+        y_new_list = []
+        Yexp_new_list = []
+
+        if use_parallel and len(X_batch) > 1:
+            # Choose number of workers conservatively: leave one CPU free
+            max_workers = min(len(X_batch), max(1, (os.cpu_count() or 1) - 1))
+
+            try:
+                with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+                    # map returns results in the same order as X_batch
+                    for y_next, Yexp_next in executor.map(lambda args: run_experiment(*args), args_iterable):
+                        y_new_list.append(y_next)
+                        Yexp_new_list.append(Yexp_next)
+                        print(f"  Candidate done: target output={y_next:.6f}")
+            except Exception as e:
+                # Fallback to serial if parallel execution fails (e.g., Julia bridge not picklable)
+                print("Parallel execution failed, falling back to serial. Error:", e)
+                for x_next in X_batch:
+                    y_next, Yexp_next = run_experiment(x_next, noise_level, n_repeats)
+                    y_new_list.append(y_next)
+                    Yexp_new_list.append(Yexp_next)
+                    print(f"  Candidate done (serial): target output={y_next:.6f}")
+        else:
+            # Serial evaluation
+            for x_next in X_batch:
+                y_next, Yexp_next = run_experiment(x_next, noise_level, n_repeats)
+                y_new_list.append(y_next)
+                Yexp_new_list.append(Yexp_next)
+                print(f"  Candidate done (serial): target output={y_next:.6f}")
+
+        # Update data once per iteration
+        X = np.vstack((X, X_batch))
+        y = np.append(y, y_new_list)
         Y_full = validate_yexp_shape(
-            np.concatenate((Y_full, Yexp_next), axis=2),
+            np.concatenate([Y_full] + Yexp_new_list, axis=2),
             nexps_expected=len(X),
             name="Y_full",
             n_repeats=n_repeats,
         )
 
-        # Warm-start the nonlinear inverse problem from the previous estimate.
-        # This is much more stable for high-noise runs than restarting from
-        # [1000, 1000] after every new experiment.
+        # Parameter estimation (warm-start from previous estimate)
         params = estimate_parameters(
             X,
             Y_full,
@@ -496,6 +532,7 @@ def bayesian_optimization(
             break
 
     print("\n=== BO FINISHED ===\n")
+
 
     return (
         X,
@@ -630,29 +667,23 @@ def plot_all_parameter_error(all_results):
         exp_counts = np.asarray(result["param_exp_counts"], dtype=int)
         label = f"noise {noise_label(result['noise'])}"
 
-        axes[0].plot(
-            exp_counts,
-            (params[:, 0] - TRUE_K[0]) / TRUE_K[0],
-            marker="o",
-            label=label,
-        )
-        axes[1].plot(
-            exp_counts,
-            (params[:, 1] - TRUE_K[1]) / TRUE_K[1],
-            marker="s",
-            label=label,
-        )
+        abs_err_k1 = np.abs(params[:, 0] - TRUE_K[0])
+        abs_err_k2 = np.abs(params[:, 1] - TRUE_K[1])
+
+        axes[0].plot(exp_counts, abs_err_k1, marker="o", label=label)
+        axes[1].plot(exp_counts, abs_err_k2, marker="s", label=label)
 
     for i, ax in enumerate(axes):
-        ax.axhline(0.0, color="black", linestyle="--", linewidth=1.5)
         ax.set_xlabel("Total experiments used")
-        ax.set_ylabel(f"relative error in k{i + 1}")
-        ax.set_title(f"Relative Parameter Error: k{i + 1}")
+        ax.set_ylabel(f"|error in k{i + 1}|")
+        ax.set_title(f"Absolute Parameter Error: k{i + 1}")
         ax.grid(True)
-        ax.set_yscale("symlog", linthresh=1e-4)
+        # Use symmetric log scale to show both tiny and large errors
+        ax.set_yscale("symlog", linthresh=1e-6)
+        apply_plain_k_axis(ax)
 
     axes[0].legend()
-    fig.suptitle("Parameter Error Across Noise Levels")
+    fig.suptitle("Absolute Parameter Error Across Noise Levels")
     fig.tight_layout()
     plt.show()
 
@@ -679,7 +710,7 @@ def plot_noise_sweep(all_results):
     """Create all combined comparison plots after the sweep is complete."""
     plot_all_experiments(all_results)
     plot_all_parameter_convergence(all_results)
-    plot_all_parameter_error(all_results)
+    plot_all_parameter_error(all_results)  # now absolute error
     plot_all_outputs(all_results)
 
 
@@ -735,3 +766,4 @@ if __name__ == "__main__":
 
     print_noise_sweep_table(all_results)
     plot_noise_sweep(all_results)
+

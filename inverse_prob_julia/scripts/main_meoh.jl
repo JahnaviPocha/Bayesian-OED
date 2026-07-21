@@ -335,6 +335,7 @@ function experiments(; scale, Y_in, Temp, P_total, Nexps, ratio, N_repeats, std_
 end
 
 function parameter_estimator(; scale, ratio, nspec, Y_in, Temp, P_total, St, nref=2500, nreac, Nexps, Y_out, unknown_parameters, IG, N_repeats, σ_data, RBS_full=false)
+    
     single_snapshot_A = []
     single_snapshot_B = []
     rbs_snapshot = []

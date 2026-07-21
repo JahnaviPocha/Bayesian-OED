@@ -102,7 +102,7 @@ function compute_rbs_coeffs_n!(k; st, scale, Temp, yin, Y_snap, Ncat_cells, nrea
         sol = solve(prob, NewtonRaphson(
                 autodiff=AutoForwardDiff(),
                 linesearch=BackTracking()
-            ); abstol=1e-10, maxiters=20)#, show_trace=Val(true))
+            ); abstol=1e-12, maxiters=20)#, show_trace=Val(true))
 
         if SciMLBase.successful_retcode(sol)
             return reshape(sol.u, nreacs, Ncat_cells)
@@ -156,7 +156,7 @@ function compute_srom_coeffs!(k; st, Temp, yin, b, Y_snap, Ncat_cells, scale, nr
         sol = solve(prob, NewtonRaphson(
                 autodiff=AutoForwardDiff(),
                 linesearch=BackTracking()
-            ); abstol=1e-10, maxiters=20)
+            ); abstol=1e-12, maxiters=20)
 
         if SciMLBase.successful_retcode(sol)
             return sol.u

@@ -37,6 +37,9 @@ from scipy.stats import norm
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel as C
 from sklearn.gaussian_process.kernels import RBF
+import concurrent.futures
+import os
+
 
 from call_to_KPE_code_meoh_fio import (
     experiments,
@@ -67,7 +70,7 @@ Y_BOUNDS = [
 ]
 TEMP_BOUNDS = (450.0, 550.0)
 
-P_TOTAL = 50
+PRESSURE_BOUNDS = (15.0, 50.0) 
 RATIO = 0.1
 N_REPEATS = 10
 
@@ -201,17 +204,22 @@ def complete_Y_in(Y_partial):
 
 
 def decode_design_vector(x):
-    """Decode x = [CO2, H2, H2O, CH3OH, CO, Temp]."""
+    """Decode x = [Y1, Y2, Y3, Y4, Y5, Temp, P_total]."""
     x = np.asarray(x, dtype=float)
-    Y_partial = x[:-1]
-    Temp = float(x[-1])
+    if x.size != (NSPEC - 1) + 2:
+        return None, None, None
+
+    Y_partial = x[: NSPEC - 1]
+    Temp = float(x[-2])
+    P_total = float(x[-1])
 
     Y_full = complete_Y_in(Y_partial)
 
     if Y_full is None:
-        return None, None
+        return None, None, None
 
-    return Y_full, Temp
+    return Y_full, Temp, P_total
+
 
 
 def validate_yexp_shape(Yexp, nexps_expected, name="Yexp"):
@@ -246,7 +254,8 @@ def deterministic_output(x, theta_normalized):
     if key in _MODEL_OUTPUT_CACHE:
         return _MODEL_OUTPUT_CACHE[key].copy()
 
-    Y_in, Temp = decode_design_vector(x)
+    Y_in, Temp, P_total = decode_design_vector(x)
+
 
     if Y_in is None:
         raise ValueError(f"Invalid design vector: {x}")
@@ -260,6 +269,7 @@ def deterministic_output(x, theta_normalized):
         St=ST,
         k0=np.asarray(theta_normalized, dtype=float),
         T=Temp,
+        P_total=P_total,   # add this argument if your Julia function accepts it
     )
 
     y_out = np.asarray(youts(d, Nspec=NSPEC), dtype=float).reshape(-1)
@@ -390,7 +400,7 @@ def run_noisy_experiment(x, noise_level):
     Returns target methanol scalar and full noisy tensor:
         (N_repeats, Nspec, 1)
     """
-    Y_in, Temp = decode_design_vector(x)
+    Y_in, Temp, P_total = decode_design_vector(x)
 
     if Y_in is None:
         raise ValueError(f"Invalid design vector: {x}")
@@ -398,10 +408,11 @@ def run_noisy_experiment(x, noise_level):
     Y_in = np.asarray(Y_in, dtype=float).reshape(NSPEC, 1)
     Temp = np.asarray([Temp], dtype=float)
 
+    # Pass per-experiment pressure into the Julia experiments() call.
     Yexp = experiments(
         Y_in=Y_in,
         Temp=Temp,
-        P_total=P_TOTAL,
+        P_total=P_total,
         Nexps=1,
         ratio=RATIO,
         N_repeats=N_REPEATS,
@@ -414,6 +425,7 @@ def run_noisy_experiment(x, noise_level):
     methanol = float(y_mean[TARGET_SPECIES_INDEX])
 
     return methanol, Yexp
+
 
 
 def estimate_parameters_from_observations(
@@ -433,18 +445,22 @@ def estimate_parameters_from_observations(
 
     Y_in_all = []
     Temp_all = []
+    P_all = []   # collect per-experiment pressures
 
     for x in X:
-        Y_in, Temp = decode_design_vector(x)
+        Y_in, Temp, P_total = decode_design_vector(x)
 
         if Y_in is None:
             raise ValueError(f"Invalid design vector in X: {x}")
 
         Y_in_all.append(Y_in)
         Temp_all.append(Temp)
+        P_all.append(P_total)
 
     Y_in_all = np.asarray(Y_in_all, dtype=float).T
     Temp_all = np.asarray(Temp_all, dtype=float)
+    P_all = np.asarray(P_all, dtype=float)   # shape (Nexps,)
+
     Y_full = validate_yexp_shape(Y_full, nexps_expected=Nexps, name="Y_full")
 
     if initial_guess_normalized is None:
@@ -455,7 +471,7 @@ def estimate_parameters_from_observations(
         "nspec": NSPEC,
         "Y_in": Y_in_all,
         "Temp": Temp_all,
-        "P_total": P_TOTAL,
+        "P_total": P_all,               # pass per-experiment pressures
         "St": ST,
         "nref": NREF_ESTIMATION,
         "nreac": N_REACTIONS,
@@ -474,6 +490,7 @@ def estimate_parameters_from_observations(
     return params_physical
 
 
+
 # ============================================================
 # DESIGN GENERATION
 # ============================================================
@@ -483,14 +500,12 @@ def generate_initial_design(N_init=5, rng=None):
     X_init = []
 
     while len(X_init) < N_init:
-        Y_partial = [
-            rng.uniform(*Y_BOUNDS[i])
-            for i in range(NSPEC - 1)
-        ]
+        Y_partial = [rng.uniform(*Y_BOUNDS[i]) for i in range(NSPEC - 1)]
         Temp = rng.uniform(*TEMP_BOUNDS)
-        x = np.asarray(Y_partial + [Temp], dtype=float)
+        P_total = rng.uniform(*PRESSURE_BOUNDS)
+        x = np.asarray(Y_partial + [Temp, P_total], dtype=float)
 
-        Y_full, _ = decode_design_vector(x)
+        Y_full, _, _ = decode_design_vector(x)
 
         if Y_full is not None:
             X_init.append(x)
@@ -503,19 +518,18 @@ def generate_candidates(n_candidates=200, rng=None):
     candidates = []
 
     while len(candidates) < n_candidates:
-        Y_partial = [
-            rng.uniform(*Y_BOUNDS[i])
-            for i in range(NSPEC - 1)
-        ]
+        Y_partial = [rng.uniform(*Y_BOUNDS[i]) for i in range(NSPEC - 1)]
         Temp = rng.uniform(*TEMP_BOUNDS)
-        x = np.asarray(Y_partial + [Temp], dtype=float)
+        P_total = rng.uniform(*PRESSURE_BOUNDS)
+        x = np.asarray(Y_partial + [Temp, P_total], dtype=float)
 
-        Y_full, _ = decode_design_vector(x)
+        Y_full, _, _ = decode_design_vector(x)
 
         if Y_full is not None:
             candidates.append(x)
 
     return np.asarray(candidates, dtype=float)
+
 
 
 # ============================================================
@@ -531,6 +545,9 @@ def scale_X(X):
         X_scaled[:, i] = (X[:, i] - lb) / (ub - lb)
 
     lb, ub = TEMP_BOUNDS
+    X_scaled[:, -2] = (X[:, -2] - lb) / (ub - lb)
+
+    lb, ub = PRESSURE_BOUNDS
     X_scaled[:, -1] = (X[:, -1] - lb) / (ub - lb)
 
     return X_scaled
@@ -690,34 +707,77 @@ def BO(
 
     print("\n=== METHANOL FIO BO START ===")
 
+        # --- inside BO, replace the while-loop body with this ---
+    # inside BO(...) before the loop:
+    use_parallel = True  # set False if Julia bridge is not process-safe
+    max_workers_override = None
+    
+    # Replace the while loop body with:
     while len(X) < max_experiments:
         gp = train_gp(X, y_info)
-        x_new = select_next_experiment(
-            gp,
-            X,
-            y_info,
-            rng=rng,
-            n_candidates=n_candidates,
-        )
-
-        info_new, F_new = point_information_objective(
-            x_new,
-            noise_level=noise_level,
-            theta_ref=NOMINAL_THETA_FOR_INFORMATION,
-        )
-        methanol_new, Yexp_new = run_noisy_experiment(x_new, noise_level=noise_level)
-
-        X = np.vstack([X, x_new])
-        y_info = np.append(y_info, info_new)
-        y_methanol = np.append(y_methanol, methanol_new)
-        F_matrices.append(F_new)
+        X_candidates = generate_candidates(n_candidates=n_candidates, rng=rng)
+        X_candidates = filter_far_candidates(X_candidates, X)
+    
+        ei = expected_improvement(X_candidates, gp, np.max(y_info))
+        sorted_idx = np.argsort(ei)[::-1]
+        # pick top-2 candidates
+        top_k = 2
+        selected_idx = sorted_idx[:top_k]
+        X_batch = X_candidates[selected_idx]
+    
+        print(f"\n--- BO Iteration: evaluating top-{len(X_batch)} candidates ---")
+    
+        # Evaluate the two candidates in parallel (or serial fallback)
+        args_iterable = [(x_next, noise_level) for x_next in X_batch]
+    
+        y_new_list = []
+        Yexp_new_list = []
+    
+        if use_parallel and len(X_batch) > 1:
+            cpu_count = os.cpu_count() or 1
+            max_workers = max_workers_override or max(1, cpu_count - 1)
+            max_workers = min(max_workers, len(X_batch))
+    
+            try:
+                with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+                    for methanol_val, Yexp in executor.map(lambda args: run_noisy_experiment(*args), args_iterable):
+                        y_new_list.append(methanol_val)
+                        Yexp_new_list.append(Yexp)
+                        print(f"  Candidate done: methanol={methanol_val:.6f}")
+            except Exception as e:
+                print("Parallel execution failed, falling back to serial. Error:", e)
+                for x_next in X_batch:
+                    methanol_val, Yexp = run_noisy_experiment(x_next, noise_level=noise_level)
+                    y_new_list.append(methanol_val)
+                    Yexp_new_list.append(Yexp)
+                    print(f"  Candidate done (serial): methanol={methanol_val:.6f}")
+        else:
+            for x_next in X_batch:
+                methanol_val, Yexp = run_noisy_experiment(x_next, noise_level=noise_level)
+                y_new_list.append(methanol_val)
+                Yexp_new_list.append(Yexp)
+                print(f"  Candidate done (serial): methanol={methanol_val:.6f}")
+    
+        # compute info and F for each selected candidate
+        info_new_list = []
+        F_new_list = []
+        for x_b in X_batch:
+            info_b, F_b = point_information_objective(x_b, noise_level=noise_level, theta_ref=NOMINAL_THETA_FOR_INFORMATION)
+            info_new_list.append(info_b)
+            F_new_list.append(F_b)
+    
+        # Update data once per iteration with both experiments
+        X = np.vstack([X, X_batch])
+        y_info = np.append(y_info, np.asarray(info_new_list, dtype=float))
+        y_methanol = np.append(y_methanol, np.asarray(y_new_list, dtype=float))
+        F_matrices.extend(F_new_list)
         Y_full = validate_yexp_shape(
-            np.concatenate((Y_full, Yexp_new), axis=2),
+            np.concatenate([Y_full] + Yexp_new_list, axis=2),
             nexps_expected=len(X),
             name="Y_full",
         )
-
-        # Feed the previous estimate back as the next normalized initial guess.
+    
+        # Parameter estimation (warm-start)
         previous_theta = clip_theta(normalize_params(param_history[-1]))
         params_physical = estimate_parameters_from_observations(
             X,
@@ -725,23 +785,22 @@ def BO(
             noise_level=noise_level,
             initial_guess_normalized=previous_theta,
         )
-
+    
         param_history.append(params_physical)
         param_exp_counts.append(len(X))
         total_info_history.append(cumulative_information_gain(F_matrices))
-
+    
         print("\n--------------------------------")
-        print(f"Experiment {len(X)}")
+        print(f"Batch update: total experiments = {len(X)}")
         print("--------------------------------")
-        print("New design =", x_new)
-        print(f"Point information = {info_new:.6f}")
+        print(f"Evaluated {len(X_batch)} candidates this iteration")
         print(f"Cumulative information = {total_info_history[-1]:.6f}")
-        print(f"Methanol = {methanol_new:.6f}")
         print("Estimated physical parameters =", params_physical)
-
+    
         if allow_early_stop and check_parameter_convergence(param_history, tol):
             print("\nConvergence reached -> stopping early.")
             break
+
 
     return {
         "X": X,
@@ -825,45 +884,44 @@ def _apply_plain_axis(ax):
     ax.ticklabel_format(axis="y", style="plain", useOffset=False)
 
 
-def plot_relative_parameter_errors(results):
+def plot_absolute_parameter_errors(results):
     fig, axes = plt.subplots(3, 3, figsize=(14, 10), sharex=True)
     axes = axes.ravel()
 
     for noise, data in results.items():
         params = data["param_history"]
         exp_counts = data["param_exp_counts"]
-        errors = relative_parameter_error(params)
         label = f"sigma={_noise_label(noise)}"
 
+        abs_errors = np.abs(params - TRUE_PARAMS_PHYSICAL.reshape(1, -1))
+
         for i, ax in enumerate(axes):
-            ax.plot(exp_counts, errors[:, i], marker="o", linewidth=1.4, label=label)
+            ax.plot(exp_counts, abs_errors[:, i], marker="o", linewidth=1.4, label=label)
 
     for i, ax in enumerate(axes):
-        ax.axhline(0.0, color="black", linestyle="--", linewidth=1.0)
         ax.set_title(f"p{i + 1}")
         ax.set_xlabel("Total experiments used")
-        ax.set_ylabel("relative error")
-        ax.set_yscale("symlog", linthresh=1e-3)
+        ax.set_ylabel("|error|")
+        ax.set_yscale("symlog", linthresh=1e-6)
         ax.grid(True)
+        _apply_plain_axis(ax)
 
     axes[0].legend()
-    fig.suptitle("Methanol FIO Parameter Relative Error")
+    fig.suptitle("Methanol FIO Parameter Absolute Error |p - p_true|")
     fig.tight_layout()
     plt.show()
 
 
-def plot_rms_parameter_error(results):
+def plot_rms_absolute_parameter_error(results):
     plt.figure(figsize=(9, 6))
 
     for noise, data in results.items():
         params = data["param_history"]
         exp_counts = data["param_exp_counts"]
-        rel_errors = relative_parameter_error(params)
-        rms_errors = np.linalg.norm(rel_errors, axis=1) / np.sqrt(N_UNKNOWN_PARAMETERS)
-
+        abs_norm = np.linalg.norm(params - TRUE_PARAMS_PHYSICAL.reshape(1, -1), axis=1)
         plt.plot(
             exp_counts,
-            rms_errors,
+            abs_norm,
             marker="o",
             linewidth=2,
             label=f"sigma={_noise_label(noise)}",
@@ -871,8 +929,8 @@ def plot_rms_parameter_error(results):
 
     plt.yscale("log")
     plt.xlabel("Total experiments used")
-    plt.ylabel("RMS relative parameter error")
-    plt.title("Methanol FIO Parameter Error Convergence")
+    plt.ylabel("Absolute parameter error (Euclidean norm)")
+    plt.title("Methanol FIO Absolute Parameter Error Convergence")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
@@ -1014,8 +1072,8 @@ def plot_designs(results):
 
 
 def plot_all(results):
-    plot_relative_parameter_errors(results)
-    plot_rms_parameter_error(results)
+    plot_absolute_parameter_errors(results)
+    plot_rms_absolute_parameter_error(results)
     plot_information_gain(results)
     plot_best_point_information(results)
     plot_methanol_outputs(results)

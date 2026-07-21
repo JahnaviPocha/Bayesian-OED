@@ -1,4 +1,5 @@
 function newton_optimizer(single_snapshot_A, single_snapshot_B, yin, Yexp; Mw_avg=0.0, std_dev=1.0, scale=1.0, molar_weights=0.0, mixture_density=0.0, B_RBS=0.0, cov=0.0, dof, T=0.0, st=0.0, Fwd=false, print=false, Initial_Guess=[0.0, 0.0], lm=false, lower_bound=false, compute_uncertainity=false, RBS=true, Nexps=2, N_measurements=2)
+    
     Nspecs = size(yin, 1)[1]
     NReactions = size(st, 1)
     Ncat_cells = length(single_snapshot_B[1][1])
@@ -90,16 +91,16 @@ function newton_optimizer(single_snapshot_A, single_snapshot_B, yin, Yexp; Mw_av
 
     if RBS == true
         f = f_rbs
-        tol = 1e-8
-        iter=1000
+        tol = 1e-12
+        iter=150
     elseif Fwd == true
         f = f_srbs_fwd
-        tol = 1e-8
-        iter=1000
+        tol = 1e-12
+        iter=150
     else
         f = f_srbs_tr
-        tol = 1e-10
-        iter=1000
+        tol = 1e-12
+        iter=150
     end
 
     k0 = collect(Initial_Guess)
@@ -132,12 +133,12 @@ function newton_optimizer(single_snapshot_A, single_snapshot_B, yin, Yexp; Mw_av
             #try
             res = solve(prob, Ipopt.Optimizer(); linear_solver="ma57",
                 hessian_approximation="limited-memory", hsllib=HSL_jll.libhsl_path,
-                print_level=5, tol=1e-12, max_iter=iter, nlp_scaling_method="gradient-based",
-                derivative_test="first-order", acceptable_obj_change_tol=1e-10, acceptable_iter=5)
+                print_level=5, tol=1e-12, acceptable_tol = 1e-12, max_iter=iter, nlp_scaling_method="gradient-based",
+                derivative_test="first-order", acceptable_obj_change_tol=0.0, acceptable_iter=0)
             sol=res.u
             status = res.retcode
             if !SciMLBase.successful_retcode(status)
-                open("../results/infeasible_sols_$(Fwd)_$(std_dev).csv", "a") do io
+                open("results/infeasible_sols_$(Fwd)_$(std_dev).csv", "a") do io
                     writedlm(io, sol, ',')
                 end
             elseif status == SciMLBase.ReturnCode.Infeasible
@@ -173,8 +174,8 @@ function newton_optimizer(single_snapshot_A, single_snapshot_B, yin, Yexp; Mw_av
             # k0=best_guess
             res = solve(prob, Ipopt.Optimizer(); linear_solver="ma57",
                 hessian_approximation="limited-memory", hsllib=HSL_jll.libhsl_path,
-                print_level=5, tol=1e-12, max_iter=iter, nlp_scaling_method="gradient-based",
-                derivative_test="first-order", acceptable_obj_change_tol=1e-10, acceptable_iter=5)
+                print_level=5, tol=1e-12, acceptable_tol = 1e-12, max_iter=iter, nlp_scaling_method="gradient-based",
+                derivative_test="first-order", acceptable_obj_change_tol=0.0, acceptable_iter=0)
             sol=res.u
             status = res.retcode
             if !SciMLBase.successful_retcode(status)

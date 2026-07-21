@@ -56,10 +56,9 @@ Y_BOUNDS = [
 ]
 TEMP_BOUNDS = (450.0, 550.0)
 
-P_TOTAL = 50
+PRESSURE_BOUNDS = (15.0, 50.0)
 RATIO = 0.1
 N_REPEATS = 10
-
 
 # Physical methanol parameters from main_meoh.jl.
 TRUE_PARAMS = np.array(
@@ -88,8 +87,8 @@ NOISE_LEVELS = [1e-3, 1e-5, 1e-7]
 
 # Methanol has 9 unknown parameters, so more experiments are usually needed
 # than the 2-parameter ROM case. These values are moderate for testing.
-N_INIT = 3
-MAX_EXPERIMENTS = 15
+N_INIT = 10
+MAX_EXPERIMENTS = 50
 N_CANDIDATES = 50
 
 # Keep False for fair noise-comparison plots.
@@ -98,14 +97,13 @@ CONVERGENCE_TOL = 1e-3
 
 BASE_SEED = 12345
 GP_ALPHA_FLOOR = 1e-16
+
 EI_XI = 0.01
 
 # RBS_full=true appears incomplete in main_meoh.jl because rbs_snapshot is not
 # filled before being passed to newton_optimizer. main_meoh complete_workflow()
 # uses RBS_full=false, so that is the safe default here too.
-RBS_FULL = True
-
-
+RBS_FULL = False
 
 
 # ============================================================
@@ -123,17 +121,17 @@ def complete_Y_in(Y_partial):
 
 
 def decode_design_vector(x):
-    """Decode x = [Y1, Y2, Y3, Y4, Y5, Temp]."""
+    """Decode x = [Y1, Y2, Y3, Y4, Y5, Temp, Pressure]."""
     x = np.asarray(x, dtype=float)
-    Y_partial = x[:-1]
-    Temp = float(x[-1])
+    Y_partial = x[:-2]
+    Temp = float(x[-2])
+    Pressure = float(x[-1])
 
     Y_full = complete_Y_in(Y_partial)
-
     if Y_full is None:
-        return None, None
+        return None, None, None
 
-    return Y_full, Temp
+    return Y_full, Temp, Pressure
 
 
 def validate_yexp_shape(Yexp, nexps_expected, name="Yexp"):
@@ -165,28 +163,18 @@ def denormalize_parameter_vector(params_normalized):
 # ============================================================
 
 def run_experiment(x, noise_level):
-    """
-    Run one methanol CFD experiment through Julia.
-
-    Returns
-    -------
-    y_scalar:
-        Mean CH3OH outlet fraction used by the GP.
-    Yexp:
-        Full noisy tensor with shape (N_repeats, Nspec, 1).
-    """
-    Y_in, Temp = decode_design_vector(x)
-
+    Y_in, Temp, Pressure = decode_design_vector(x)
     if Y_in is None:
-        raise ValueError(f"Invalid design vector with negative final species: {x}")
+        raise ValueError(f"Invalid design vector: {x}")
 
     Y_in = np.asarray(Y_in, dtype=float).reshape(NSPEC, 1)
     Temp = np.asarray([Temp], dtype=float)
+    Pressure = np.asarray([Pressure], dtype=float)
 
     Yexp = experiments(
         Y_in=Y_in,
         Temp=Temp,
-        P_total=P_TOTAL,
+        P_total=Pressure,
         Nexps=1,
         ratio=RATIO,
         N_repeats=N_REPEATS,
@@ -196,10 +184,8 @@ def run_experiment(x, noise_level):
     )
 
     Yexp = validate_yexp_shape(Yexp, nexps_expected=1)
-
     Y_mean = np.mean(Yexp, axis=0)[:, 0]
     y_scalar = float(Y_mean[TARGET_SPECIES_INDEX])
-
     return y_scalar, Yexp
 
 
@@ -210,23 +196,27 @@ def estimate_parameters(X, Y_outputs, noise_level):
 
     Y_in_all = []
     Temp_all = []
+    P_all = []
 
     for x in X:
-        Y_in, Temp = decode_design_vector(x)
+        Y_in, Temp, Pressure = decode_design_vector(x)
 
         if Y_in is None:
             raise ValueError(f"Invalid design vector in X: {x}")
 
         Y_in_all.append(Y_in)
         Temp_all.append(Temp)
+        P_all.append(Pressure)
 
     Y_in_all = np.asarray(Y_in_all, dtype=float).T
     Temp_all = np.asarray(Temp_all, dtype=float)
+    P_all = np.asarray(P_all, dtype=float)
     Y_out = validate_yexp_shape(Y_outputs, nexps_expected=Nexps, name="Y_outputs")
 
     print("\nDEBUG:")
     print("Y_in:", Y_in_all.shape)
     print("Temp:", Temp_all.shape)
+    print("P_total:", P_all.shape)
     print("Y_out:", Y_out.shape)
 
     kwargs = {
@@ -234,7 +224,7 @@ def estimate_parameters(X, Y_outputs, noise_level):
         "nspec": NSPEC,
         "Y_in": Y_in_all,
         "Temp": Temp_all,
-        "P_total": P_TOTAL,
+        "P_total": P_all,
         "St": np.array([
             [-1.0, -3.0, 1.0, 1.0, 0.0, 0.0],
             [-1.0, -1.0, 1.0, 0.0, 1.0, 0.0]
@@ -264,19 +254,16 @@ def estimate_parameters(X, Y_outputs, noise_level):
 # ============================================================
 
 def generate_initial_design(N_init=5, rng=None):
-    """Generate valid initial BO points."""
     rng = np.random.default_rng() if rng is None else rng
     X_init = []
 
     while len(X_init) < N_init:
-        Y_partial = [
-            rng.uniform(*Y_BOUNDS[i])
-            for i in range(NSPEC - 1)
-        ]
+        Y_partial = [rng.uniform(*Y_BOUNDS[i]) for i in range(NSPEC - 1)]
         Temp = rng.uniform(*TEMP_BOUNDS)
-        x = np.asarray(Y_partial + [Temp], dtype=float)
+        Pressure = rng.uniform(*PRESSURE_BOUNDS)
 
-        Y_full, _ = decode_design_vector(x)
+        x = np.asarray(Y_partial + [Temp, Pressure], dtype=float)
+        Y_full, _, _ = decode_design_vector(x)
 
         if Y_full is not None:
             X_init.append(x)
@@ -295,9 +282,10 @@ def generate_candidates(n_candidates=200, rng=None):
             for i in range(NSPEC - 1)
         ]
         Temp = rng.uniform(*TEMP_BOUNDS)
-        x = np.asarray(Y_partial + [Temp], dtype=float)
+        Pressure = rng.uniform(*PRESSURE_BOUNDS)
 
-        Y_full, _ = decode_design_vector(x)
+        x = np.asarray(Y_partial + [Temp, Pressure], dtype=float)
+        Y_full, _, _ = decode_design_vector(x)
 
         if Y_full is not None:
             candidates.append(x)
@@ -319,6 +307,9 @@ def scale_X(X):
         X_scaled[:, i] = (X[:, i] - lb) / (ub - lb)
 
     lb, ub = TEMP_BOUNDS
+    X_scaled[:, -2] = (X[:, -2] - lb) / (ub - lb)
+
+    lb, ub = PRESSURE_BOUNDS
     X_scaled[:, -1] = (X[:, -1] - lb) / (ub - lb)
 
     return X_scaled
@@ -369,16 +360,6 @@ def expected_improvement(X_candidates, gp, y_best, xi=EI_XI):
     return ei.ravel()
 
 
-def select_next_experiment(gp, X, y, rng=None, n_candidates=200):
-    """Choose the next experiment using expected improvement."""
-    X_candidates = generate_candidates(n_candidates=n_candidates, rng=rng)
-    y_best = np.max(y)
-    ei = expected_improvement(X_candidates, gp, y_best)
-    best_idx = int(np.argmax(ei))
-
-    return X_candidates[best_idx]
-
-
 # ============================================================
 # BO LOOP
 # ============================================================
@@ -402,6 +383,7 @@ def check_parameter_convergence(param_history, tol=1e-3):
     print(f"Relative parameter change: {delta:.4e}")
 
     return delta < tol
+
 
 def bayesian_optimization(
     noise_level,
@@ -461,40 +443,59 @@ def bayesian_optimization(
 
     print(f"Initial parameters: {params}")
 
+    # BO iterations with top-2 batch per iteration
     for iteration in range(max_experiments - N_init):
+
         print(f"\n--- BO Iteration {iteration + 1} ---")
 
         gp = build_gp_model(X, y, noise_level)
-        x_next = select_next_experiment(
-            gp,
-            X,
-            y,
-            rng=rng,
-            n_candidates=n_candidates,
-        )
 
-        y_next, Yexp_next = run_experiment(x_next, noise_level)
+        # Generate candidate batch
+        X_candidates = generate_candidates(n_candidates=n_candidates, rng=rng)
 
-        print("New experiment:")
-        print(f"  x = {x_next}")
-        print(f"  methanol = {y_next:.6f}")
+        # Compute EI for all candidates
+        y_best = np.max(y)
+        ei = expected_improvement(X_candidates, gp, y_best)
 
-        X = np.vstack((X, x_next))
-        y = np.append(y, y_next)
+        # Select top-2 candidates
+        sorted_idx = np.argsort(ei)[::-1]
+        top_k = 2
+        X_batch = X_candidates[sorted_idx[:top_k]]
+
+        print(f"Running {len(X_batch)} experiments in this BO iteration...")
+
+        y_new_list = []
+        Yexp_new_list = []
+
+        for x_next in X_batch:
+            y_next, Yexp_next = run_experiment(x_next, noise_level)
+            print(f"  x={x_next}, methanol={y_next:.6f}")
+            y_new_list.append(y_next)
+            Yexp_new_list.append(Yexp_next)
+
+        # Update data ONCE per iteration
+        X = np.vstack((X, X_batch))
+        y = np.append(y, y_new_list)
         Y_full = validate_yexp_shape(
-            np.concatenate((Y_full, Yexp_next), axis=2),
+            np.concatenate([Y_full] + Yexp_new_list, axis=2),
             nexps_expected=len(X),
             name="Y_full",
         )
 
+        # Parameter estimation (warm-start)
         params = estimate_parameters(X, Y_full, noise_level)
         param_history.append(params)
         param_exp_counts.append(len(X))
 
         print(f"Estimated parameters: {params}")
 
+        # Stop if we reached max experiments
+        if len(X) >= max_experiments:
+            print("\nReached maximum experiments → stopping.")
+            break
+
         if allow_early_stop and check_parameter_convergence(param_history, tol):
-            print("\nConvergence reached -> stopping early.")
+            print("\nConvergence reached → stopping early.")
             break
 
     print("\n=== BO FINISHED ===\n")
@@ -567,38 +568,20 @@ def print_noise_sweep_table(all_results):
 # COMBINED PLOTS
 # ============================================================
 
-def apply_plain_axis(ax):
-    formatter = mticker.ScalarFormatter(useOffset=False)
-    formatter.set_scientific(False)
-    ax.yaxis.set_major_formatter(formatter)
-    ax.ticklabel_format(axis="y", style="plain", useOffset=False)
+# ============================================================
+# UPDATED PLOTTING SECTION
+# ============================================================
 
-
-def plot_all_experiments(all_results):
-    plt.figure(figsize=(8, 5))
-
-    for result in all_results:
-        X = result["X"]
-        label = f"noise {noise_label(result['noise'])}, n={len(X)}"
-        plt.plot(X[:, 0], X[:, -1], marker="o", linewidth=1.5, label=label)
-
-    plt.xlabel("CO2 inlet fraction")
-    plt.ylabel("Temperature (K)")
-    plt.title("Methanol BOED Designs Across Noise Levels")
-    plt.grid(True)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_all_methanol_outputs(all_results):
-    plt.figure(figsize=(8, 5))
+def plot_methanol_vs_experiments(all_results):
+    plt.figure(figsize=(10, 6))
 
     for result in all_results:
         y = np.asarray(result["y"], dtype=float)
         exp_numbers = np.arange(1, len(y) + 1)
         label = f"noise {noise_label(result['noise'])}"
-        plt.plot(exp_numbers, y, marker="o", linewidth=1.5, label=label)
+
+        plt.scatter(exp_numbers, y, s=60, alpha=0.7, label=label)
+        plt.plot(exp_numbers, y, linewidth=1.5)
 
     plt.xlabel("Experiment number")
     plt.ylabel("Methanol outlet fraction")
@@ -609,77 +592,148 @@ def plot_all_methanol_outputs(all_results):
     plt.show()
 
 
-def plot_relative_parameter_errors(all_results):
-    fig, axes = plt.subplots(3, 3, figsize=(14, 10), sharex=True)
-    axes = axes.ravel()
-
+def plot_methanol_vs_design(all_results):
+    # Methanol vs CO2
+    plt.figure(figsize=(10, 6))
     for result in all_results:
-        params = np.asarray(result["params"], dtype=float)
-        exp_counts = np.asarray(result["param_exp_counts"], dtype=int)
-        errors = relative_error(params)
-        label = f"noise {noise_label(result['noise'])}"
+        X = result["X"]
+        y = result["y"]
+        plt.scatter(X[:, 0], y, s=60, alpha=0.7, label=f"noise {noise_label(result['noise'])}")
+    plt.xlabel("CO₂ inlet fraction")
+    plt.ylabel("Methanol outlet fraction")
+    plt.title("Methanol vs CO₂ inlet fraction")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
 
-        for i, ax in enumerate(axes):
-            ax.plot(exp_counts, errors[:, i], marker="o", linewidth=1.3, label=label)
+    # Methanol vs Temperature
+    plt.figure(figsize=(10, 6))
+    for result in all_results:
+        X = result["X"]
+        y = result["y"]
+        plt.scatter(X[:, -2], y, s=60, alpha=0.7, label=f"noise {noise_label(result['noise'])}")
+    plt.xlabel("Temperature (K)")
+    plt.ylabel("Methanol outlet fraction")
+    plt.title("Methanol vs Temperature")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
 
-    for i, ax in enumerate(axes):
-        ax.axhline(0.0, color="black", linestyle="--", linewidth=1.0)
-        ax.set_title(f"p{i + 1}")
-        ax.set_xlabel("Total experiments used")
-        ax.set_ylabel("relative error")
-        ax.set_yscale("symlog", linthresh=1e-3)
-        ax.grid(True)
-
-    axes[0].legend()
-    fig.suptitle("Methanol Parameter Relative Error")
-    fig.tight_layout()
+    # Methanol vs Pressure
+    plt.figure(figsize=(10, 6))
+    for result in all_results:
+        X = result["X"]
+        y = result["y"]
+        plt.scatter(X[:, -1], y, s=60, alpha=0.7, label=f"noise {noise_label(result['noise'])}")
+    plt.xlabel("Pressure (bar)")
+    plt.ylabel("Methanol outlet fraction")
+    plt.title("Methanol vs Pressure")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
     plt.show()
 
 
-def plot_selected_physical_parameters(all_results, selected=(0, 1, 4, 8)):
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharex=True)
-    axes = axes.ravel()
+def plot_3d_design_space(all_results):
+    from mpl_toolkits.mplot3d import Axes3D
+
+    fig = plt.figure(figsize=(10, 7))
+    ax = fig.add_subplot(111, projection="3d")
 
     for result in all_results:
-        params = np.asarray(result["params"], dtype=float)
-        exp_counts = np.asarray(result["param_exp_counts"], dtype=int)
+        X = result["X"]
         label = f"noise {noise_label(result['noise'])}"
+        ax.scatter(
+            X[:, 0],      # CO2
+            X[:, -2],     # Temp
+            X[:, -1],     # Pressure
+            s=60,
+            alpha=0.7,
+            label=label
+        )
 
-        for axis_index, param_index in enumerate(selected):
-            axes[axis_index].plot(
+    ax.set_xlabel("CO₂ inlet fraction")
+    ax.set_ylabel("Temperature (K)")
+    ax.set_zlabel("Pressure (bar)")
+    ax.set_title("3D Design Space Exploration")
+    ax.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_parameters_separately(all_results):
+    for param_index in range(N_UNKNOWN_PARAMETERS):
+        plt.figure(figsize=(8, 5))
+
+        for result in all_results:
+            params = np.asarray(result["params"], dtype=float)
+            exp_counts = np.asarray(result["param_exp_counts"], dtype=int)
+            label = f"noise {noise_label(result['noise'])}"
+
+            plt.plot(
                 exp_counts,
                 params[:, param_index],
                 marker="o",
-                linewidth=1.3,
+                linewidth=1.5,
                 label=label,
             )
 
-    for axis_index, param_index in enumerate(selected):
-        ax = axes[axis_index]
-        ax.axhline(TRUE_PARAMS[param_index], color="black", linestyle="--", linewidth=1.0)
-        ax.axhline(
-            INITIAL_GUESS_PHYSICAL[param_index],
-            color="gray",
-            linestyle=":",
-            linewidth=1.0,
-        )
-        ax.set_title(f"p{param_index + 1}")
-        ax.set_xlabel("Total experiments used")
-        ax.set_ylabel("physical value")
-        ax.grid(True)
-        apply_plain_axis(ax)
+        plt.axhline(TRUE_PARAMS[param_index], color="black", linestyle="--", linewidth=1.2)
+        plt.axhline(INITIAL_GUESS_PHYSICAL[param_index], color="gray", linestyle=":", linewidth=1.2)
 
-    axes[0].legend()
-    fig.suptitle("Selected Methanol Parameter Convergence")
-    fig.tight_layout()
-    plt.show()
+        plt.title(f"Parameter p{param_index + 1} Convergence")
+        plt.xlabel("Total experiments used")
+        plt.ylabel("Absolute value")
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+        
+def plot_parameter_errors(all_results):
+    """
+    Plot relative error for each parameter separately.
+    rel_error = (estimated - true) / true
+    """
+    for param_index in range(N_UNKNOWN_PARAMETERS):
+        plt.figure(figsize=(8, 5))
+
+        for result in all_results:
+            params = np.asarray(result["params"], dtype=float)
+            exp_counts = np.asarray(result["param_exp_counts"], dtype=int)
+            label = f"noise {noise_label(result['noise'])}"
+
+            true_val = TRUE_PARAMS[param_index]
+            rel_err = (params[:, param_index] - true_val) / max(abs(true_val), 1e-12)
+
+            plt.plot(
+                exp_counts,
+                rel_err,
+                marker="o",
+                linewidth=1.5,
+                label=label,
+            )
+
+        plt.axhline(0.0, color="black", linestyle="--", linewidth=1.2)
+
+        plt.title(f"Parameter p{param_index + 1} Relative Error")
+        plt.xlabel("Total experiments used")
+        plt.ylabel("Relative error")
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
 
 
 def plot_noise_sweep(all_results):
-    plot_all_experiments(all_results)
-    plot_all_methanol_outputs(all_results)
-    plot_relative_parameter_errors(all_results)
-    plot_selected_physical_parameters(all_results)
+    plot_methanol_vs_experiments(all_results)
+    plot_methanol_vs_design(all_results)
+    plot_3d_design_space(all_results)
+    plot_parameters_separately(all_results)   # absolute values
+    plot_parameter_errors(all_results)        # relative errors
+
 
 
 # ============================================================
@@ -725,8 +779,6 @@ if __name__ == "__main__":
 
     print_noise_sweep_table(all_results)
     plot_noise_sweep(all_results)
-    
-    
-    
+
     
     
