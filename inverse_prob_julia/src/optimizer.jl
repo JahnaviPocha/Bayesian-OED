@@ -96,7 +96,7 @@ function newton_optimizer(single_snapshot_A, single_snapshot_B, yin, Yexp; Mw_av
     elseif Fwd == true
         f = f_srbs_fwd
         tol = 1e-12
-        iter=150
+        iter=500
     else
         f = f_srbs_tr
         tol = 1e-12

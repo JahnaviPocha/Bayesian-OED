@@ -1,28 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Jun 18 09:53:23 2026
+Created on Wed Jul 22 12:41:25 2026
 
 @author: jahna
 """
 
-"""
-Bayesian OED driver for the methanol-production Julia model.
-
-This follows the corrected ROM BOED structure:
-- one Python driver loops over noise levels
-- Julia experiments() supplies noisy outlet data
-- the GP uses the mean methanol output as the acquisition objective
-- Julia parameter_estimator() receives the full Y tensor
-- all noise levels are plotted together after the sweep
-
-Expected Julia tensor shape:
-    Y_out = (N_repeats, Nspec, Nexps)
-
-Put this file in:
-    inverse_prob_julia/
-
-and put call_to_KPE_code_meoh.py in the same folder.
-"""
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
@@ -114,7 +96,7 @@ EI_XI = 0.01
 # RBS_full=true appears incomplete in main_meoh.jl because rbs_snapshot is not
 # filled before being passed to newton_optimizer. main_meoh complete_workflow()
 # uses RBS_full=false, so that is the safe default here too.
-RBS_FULL = True
+RBS_FULL = False
 
 
 # ============================================================
@@ -250,7 +232,11 @@ def estimate_parameters(X, Y_outputs, noise_level):
         "scale": 1.0,
     }
     
-    
+    # Test-Prints vor Zeile 253 einfügen:
+    print("DEBUG - X shape:", X.shape if hasattr(X, 'shape') else len(X))
+    print("DEBUG - Y_full shape:", Y_full.shape if hasattr(Y_full, 'shape') else len(Y_full))
+    print("DEBUG - noise_level:", noise_level)
+
     params_physical = parameter_estimator(**kwargs)
     params_physical = np.asarray(params_physical, dtype=float).reshape(-1)
 
@@ -790,5 +776,4 @@ if __name__ == "__main__":
     print_noise_sweep_table(all_results)
     plot_noise_sweep(all_results)
 
-    
     
