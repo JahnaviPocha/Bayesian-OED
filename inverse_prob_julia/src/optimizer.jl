@@ -123,12 +123,12 @@ function newton_optimizer(single_snapshot_A, single_snapshot_B, yin, Yexp; Mw_av
             prob = OptimizationProblem(optf, k0, p; lb=lower, ub=upper)
             # Run Ipopt!
             sol=0.0
-            println("sol at my initial guess is:", f(k0, p))
-            println("gradient at my initial guess is:", ForwardDiff.gradient(k -> f(k, p), k0))
-            H=ForwardDiff.hessian(k -> f(k, p), k0)
-            println("hessian at optimal solution is:", H)
-            vars=f(k0,p) / 4 * (abs.(inv(H)))
-            @show sqrt.(vars)
+            # println("sol at my initial guess is:", f(k0, p))
+            # println("gradient at my initial guess is:", ForwardDiff.gradient(k -> f(k, p), k0))
+            # H=ForwardDiff.hessian(k -> f(k, p), k0)
+            # println("hessian at optimal solution is:", H)
+            # vars=f(k0,p) / 4 * (abs.(inv(H)))
+            # @show sqrt.(vars)
             #error("")
             #try
             res = solve(prob, Ipopt.Optimizer(); linear_solver="ma57",
@@ -138,9 +138,9 @@ function newton_optimizer(single_snapshot_A, single_snapshot_B, yin, Yexp; Mw_av
             sol=res.u
             status = res.retcode
             if !SciMLBase.successful_retcode(status)
-                open("results/infeasible_sols_$(Fwd)_$(std_dev).csv", "a") do io
-                    writedlm(io, sol, ',')
-                end
+                # open("results/infeasible_sols_$(Fwd)_$(std_dev).csv", "a") do io
+                #     writedlm(io, sol, ',')
+                # end
             elseif status == SciMLBase.ReturnCode.Infeasible
                 sol=fill(0.5, dof)
             end
@@ -164,12 +164,12 @@ function newton_optimizer(single_snapshot_A, single_snapshot_B, yin, Yexp; Mw_av
             prob = OptimizationProblem(optf, k0, p; lb=lower, ub=upper)
             # Run Ipopt!
             sol=0.0
-            println("sol at my initial guess is:", f(k0, p))
-            println("gradient at my initial guess is:", ForwardDiff.gradient(k -> f(k, p), k0))
-            H=ForwardDiff.hessian(k -> f(k, p), k0)
-            println("hessian at optimal solution is:", H)
-            vars= f(k0,p) / 4 * (abs.(inv(H)))
-            @show sqrt.(vars)
+            # println("sol at my initial guess is:", f(k0, p))
+            # println("gradient at my initial guess is:", ForwardDiff.gradient(k -> f(k, p), k0))
+            # H=ForwardDiff.hessian(k -> f(k, p), k0)
+            # println("hessian at optimal solution is:", H)
+            # vars= f(k0,p) / 4 * (abs.(inv(H)))
+            # @show sqrt.(vars)
             #error("")
             # k0=best_guess
             res = solve(prob, Ipopt.Optimizer(); linear_solver="ma57",
@@ -179,9 +179,9 @@ function newton_optimizer(single_snapshot_A, single_snapshot_B, yin, Yexp; Mw_av
             sol=res.u
             status = res.retcode
             if !SciMLBase.successful_retcode(status)
-                open("../results/infeasible_sols_$(std_dev).csv", "a") do io
-                    writedlm(io, sol, ',')
-                end
+                # open("../results/infeasible_sols_$(std_dev).csv", "a") do io
+                #     writedlm(io, sol, ',')
+                # end
             elseif status == SciMLBase.ReturnCode.Infeasible
                 sol=ones(dof)
             end

@@ -358,6 +358,7 @@ function parameter_estimator(; scale, ratio, nspec, Y_in, Temp, P_total, St, nre
         if RBS_full == true
             @info "Conducting Offline Step for Full Reduced Basis"
             B_RBS = RBS_Snapshots(main; nref=nref, vel=0.15, ratio=ratio, St=St, Nexps=Nexps, nspec=nspec, nreac=nreac, inlet_MFs=Y_in[:, j], T=Temp[j], P_total=P_total[j])
+            push!(rbs_snapshot, B_RBS)
         else
             B_RBS = 0.0
         end
