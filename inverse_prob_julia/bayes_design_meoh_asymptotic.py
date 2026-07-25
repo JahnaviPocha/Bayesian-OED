@@ -462,16 +462,19 @@ def check_parameter_convergence(param_history, tol=1e-3):
     return delta < tol
 
 
+    
 def bayesian_optimization(
     noise_level,
-    N_init=5,
-    max_experiments=10,
+    N_init=N_INIT,
+    max_experiments=MAX_EXPERIMENTS,
     tol=1e-3,
-    n_candidates=200,
-    allow_early_stop=True,
+    n_candidates=N_CANDIDATES,
+    allow_early_stop=ALLOW_EARLY_STOP_IN_SWEEP,
     rng_seed=None,
     initial_design=None,
 ):
+
+    
     """
     Full BOED loop for methanol.
 
@@ -1302,11 +1305,6 @@ if __name__ == "__main__":
 
         X, y, Y_full, param_history, param_exp_counts = bayesian_optimization(
             noise_level=noise,
-            N_init=N_INIT,
-            max_experiments=MAX_EXPERIMENTS,
-            tol=CONVERGENCE_TOL,
-            n_candidates=N_CANDIDATES,
-            allow_early_stop=ALLOW_EARLY_STOP_IN_SWEEP,
             rng_seed=BASE_SEED,
             initial_design=shared_initial_design,
         )

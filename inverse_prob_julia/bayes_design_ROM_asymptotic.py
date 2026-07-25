@@ -15,6 +15,8 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel as C
 from sklearn.gaussian_process.kernels import RBF
 
+
+
 from call_to_KPE_code import experiments, parameter_estimator
 
 
@@ -42,7 +44,8 @@ PARAMETER_NAMES = ["k1", "k2"]
 SCALE = 1.0
 P_TOTAL = 50.0
 RATIO = 0.1
-STD_DATA = 1e-6
+NOISE_LEVELS = [1e-3, 1e-4, 1e-5]
+STD_DATA = NOISE_LEVELS[0]  # Active noise level, updated inside the sweep.
 N_REPEATS = 10
 RBS_FULL = False
 
@@ -50,18 +53,20 @@ N_INIT = 10
 MAX_EXPERIMENTS = 100
 N_CANDIDATES = 200
 BO_CONVERGENCE_TOL = 1e-3
-ALLOW_EARLY_STOP = True
+ALLOW_EARLY_STOP = False
 
 BASE_SEED = 12345
 EI_XI = 0.01
 GP_ALPHA_FLOOR = 1e-12
 
+
+# All plots, Excel data, and text summaries are saved under this folder.
 PROJECT_DIR = Path(
     r"C:\Users\jahna\OneDrive\Desktop\masters\master's thesis"
     r"\Bayesian-OED\inverse_prob_julia"
 )
 
-RESULTS_FOLDER_NAME = "bayes_design_ROM_asymtotic"
+RESULTS_FOLDER_NAME = "bayes_design_ROM_asymptotic"
 ADD_TIMESTAMP_TO_RESULTS_FOLDER = False
 
 folder_name = RESULTS_FOLDER_NAME
@@ -75,7 +80,6 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 SAVE_PLOTS = True
 SHOW_PLOTS = True
 PRINT_ESTIMATOR_SHAPES = True
-
 
 # ============================================================
 # OUTPUT HELPERS
@@ -449,9 +453,36 @@ def bayesian_optimization(
     )
 
 
+
 # ============================================================
 # SUMMARY, EXPORT, AND PLOTS
 # ============================================================
+
+NOISE_COLORS = {
+    1e-3: "tab:blue",
+    1e-4: "tab:orange",
+    1e-5: "tab:green",
+}
+
+NOISE_MARKERS = {
+    1e-3: "o",
+    1e-4: "s",
+    1e-5: "^",
+}
+
+NOISE_LINESTYLES = {
+    1e-3: "-",
+    1e-4: "--",
+    1e-5: "-.",
+}
+
+
+def style_for_noise(noise):
+    return {
+        "color": NOISE_COLORS.get(noise, None),
+        "marker": NOISE_MARKERS.get(noise, "o"),
+        "linestyle": NOISE_LINESTYLES.get(noise, "-"),
+    }
 
 def parameter_errors(params):
     params = np.asarray(params, dtype=float)
@@ -464,9 +495,9 @@ def relative_parameter_errors(params):
     return (params - TRUE_K) / denom
 
 
-def summarize_results(X, y, param_history):
+def summarize_results(noise_level, X, y, param_history):
     print("\n===== FINAL RESULTS SUMMARY =====\n")
-    print(f"STD_DATA: {STD_DATA:.0e}")
+    print(f"Noise level: {noise_level:.0e}")
     print(f"Total experiments used: {len(X)}")
 
     final_params = np.asarray(param_history[-1], dtype=float)
@@ -483,12 +514,39 @@ def summarize_results(X, y, param_history):
         )
 
     best_idx = int(np.argmax(y))
-
     print("\nBest experiment by target output:")
     print(f"  X = {X[best_idx]}")
     print(f"  target output = {y[best_idx]:.6f}")
 
     return final_params
+
+
+def set_active_noise(noise_level):
+    global STD_DATA
+    STD_DATA = float(noise_level)
+
+def run_single_noise_case(noise_level):
+    set_active_noise(noise_level)
+
+    print("\n")
+    print("=" * 60)
+    print(f"RUNNING ROM/RBS BOED FOR NOISE = {noise_level:.0e}")
+    print("=" * 60)
+
+    X, y, Y_full, param_history, param_exp_counts = bayesian_optimization(
+        rng_seed=BASE_SEED,
+    )
+    final_params = summarize_results(noise_level, X, y, param_history)
+
+    return {
+        "noise": float(noise_level),
+        "X": X,
+        "y": y,
+        "Y_full": Y_full,
+        "param_history": np.asarray(param_history, dtype=float),
+        "param_exp_counts": np.asarray(param_exp_counts, dtype=int),
+        "final_params": np.asarray(final_params, dtype=float),
+    }
 
 
 def build_settings_dataframe(results_dir):
@@ -503,7 +561,7 @@ def build_settings_dataframe(results_dir):
         "SCALE": SCALE,
         "P_TOTAL": P_TOTAL,
         "RATIO": RATIO,
-        "STD_DATA": STD_DATA,
+        "NOISE_LEVELS": ", ".join(noise_label(noise) for noise in NOISE_LEVELS),
         "N_REPEATS": N_REPEATS,
         "RBS_FULL": RBS_FULL,
         "N_INIT": N_INIT,
@@ -516,23 +574,27 @@ def build_settings_dataframe(results_dir):
         "GP_ALPHA_FLOOR": GP_ALPHA_FLOOR,
         "gp_scaled_X_passed_to_julia": False,
     }
-
     return pd.DataFrame(
         [{"setting": key, "value": value} for key, value in settings.items()]
     )
 
 
-def build_final_summary_dataframe(X, y, final_params):
-    best_idx = int(np.argmax(y))
-    rel_err = relative_parameter_errors(final_params)
 
-    return pd.DataFrame(
-        [
+def build_noise_sweep_summary_dataframe(all_results):
+    rows = []
+
+    for result in all_results:
+        final_params = np.asarray(result["final_params"], dtype=float)
+        rel_err = relative_parameter_errors(final_params)
+        best_idx = int(np.argmax(result["y"]))
+
+        rows.append(
             {
-                "std_data": STD_DATA,
-                "n_experiments": len(X),
+                "noise": noise_label(result["noise"]),
+                "std_data": result["noise"],
+                "n_experiments": len(result["X"]),
                 "best_experiment_number": best_idx + 1,
-                "best_target_output": float(y[best_idx]),
+                "best_target_output": float(result["y"][best_idx]),
                 "final_k1": final_params[0],
                 "final_k2": final_params[1],
                 "true_k1": TRUE_K[0],
@@ -543,46 +605,28 @@ def build_final_summary_dataframe(X, y, final_params):
                     np.linalg.norm(rel_err) / np.sqrt(rel_err.size)
                 ),
             }
-        ]
-    )
-
-
-def build_final_parameters_dataframe(final_params):
-    abs_err = parameter_errors(final_params)
-    rel_err = relative_parameter_errors(final_params)
-    rows = []
-
-    for i, name in enumerate(PARAMETER_NAMES):
-        rows.append(
-            {
-                "parameter": name,
-                "true_value": TRUE_K[i],
-                "initial_guess": INITIAL_GUESS[i],
-                "final_estimate": final_params[i],
-                "absolute_error": abs_err[i],
-                "relative_error": rel_err[i],
-            }
         )
 
     return pd.DataFrame(rows)
 
 
-def build_parameter_history_dataframe(param_history, param_exp_counts):
-    params = np.asarray(param_history, dtype=float)
-    exp_counts = np.asarray(param_exp_counts, dtype=int)
+def build_noise_sweep_final_parameters_dataframe(all_results):
     rows = []
 
-    for row_index, exp_count in enumerate(exp_counts):
-        abs_err = parameter_errors(params[row_index])
-        rel_err = relative_parameter_errors(params[row_index])
+    for result in all_results:
+        final_params = np.asarray(result["final_params"], dtype=float)
+        abs_err = parameter_errors(final_params)
+        rel_err = relative_parameter_errors(final_params)
 
         for param_index, name in enumerate(PARAMETER_NAMES):
             rows.append(
                 {
-                    "total_experiments_used": int(exp_count),
+                    "noise": noise_label(result["noise"]),
+                    "std_data": result["noise"],
                     "parameter": name,
-                    "estimate": params[row_index, param_index],
                     "true_value": TRUE_K[param_index],
+                    "initial_guess": INITIAL_GUESS[param_index],
+                    "final_estimate": final_params[param_index],
                     "absolute_error": abs_err[param_index],
                     "relative_error": rel_err[param_index],
                 }
@@ -591,58 +635,141 @@ def build_parameter_history_dataframe(param_history, param_exp_counts):
     return pd.DataFrame(rows)
 
 
-def build_design_dataframe(X, y):
+def build_noise_sweep_parameter_history_dataframe(all_results):
     rows = []
 
-    for exp_index, x in enumerate(np.asarray(X, dtype=float)):
-        Y_full, temp = decode_design_vector(x)
-        row = {
-            "experiment_number": exp_index + 1,
-            "target_output_species_3": y[exp_index],
-            "temperature_K": temp,
-        }
+    for result in all_results:
+        params = np.asarray(result["param_history"], dtype=float)
+        exp_counts = np.asarray(result["param_exp_counts"], dtype=int)
 
-        for species_index, species_name in enumerate(SPECIES_NAMES):
-            row[f"{species_name}_inlet_mass_fraction"] = Y_full[species_index]
+        for row_index, exp_count in enumerate(exp_counts):
+            abs_err = parameter_errors(params[row_index])
+            rel_err = relative_parameter_errors(params[row_index])
 
-        rows.append(row)
-
-    return pd.DataFrame(rows)
-
-
-def build_y_outputs_dataframe(Y_full):
-    Y_full = np.asarray(Y_full, dtype=float)
-    rows = []
-
-    for repeat_index in range(Y_full.shape[0]):
-        for species_index, species_name in enumerate(SPECIES_NAMES):
-            for exp_index in range(Y_full.shape[2]):
+            for param_index, name in enumerate(PARAMETER_NAMES):
                 rows.append(
                     {
-                        "repeat_number": repeat_index + 1,
-                        "species_index": species_index + 1,
-                        "species": species_name,
-                        "experiment_number": exp_index + 1,
-                        "outlet_mass_fraction": Y_full[
-                            repeat_index,
-                            species_index,
-                            exp_index,
-                        ],
+                        "noise": noise_label(result["noise"]),
+                        "std_data": result["noise"],
+                        "total_experiments_used": int(exp_count),
+                        "parameter": name,
+                        "estimate": params[row_index, param_index],
+                        "true_value": TRUE_K[param_index],
+                        "absolute_error": abs_err[param_index],
+                        "relative_error": rel_err[param_index],
                     }
                 )
 
     return pd.DataFrame(rows)
 
 
-def export_results_to_excel(
-    X,
-    y,
-    Y_full,
-    param_history,
-    param_exp_counts,
-    final_params,
-    results_dir,
-):
+def build_noise_sweep_design_dataframe(all_results):
+    rows = []
+
+    for result in all_results:
+        for exp_index, x in enumerate(np.asarray(result["X"], dtype=float)):
+            Y_full, temp = decode_design_vector(x)
+            row = {
+                "noise": noise_label(result["noise"]),
+                "std_data": result["noise"],
+                "experiment_number": exp_index + 1,
+                "target_output_species_3": result["y"][exp_index],
+                "temperature_K": temp,
+            }
+
+            for species_index, species_name in enumerate(SPECIES_NAMES):
+                row[f"{species_name}_inlet_mass_fraction"] = Y_full[species_index]
+
+            rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def build_noise_sweep_y_outputs_dataframe(all_results):
+    rows = []
+
+    for result in all_results:
+        Y_full = np.asarray(result["Y_full"], dtype=float)
+
+        for repeat_index in range(Y_full.shape[0]):
+            for species_index, species_name in enumerate(SPECIES_NAMES):
+                for exp_index in range(Y_full.shape[2]):
+                    rows.append(
+                        {
+                            "noise": noise_label(result["noise"]),
+                            "std_data": result["noise"],
+                            "repeat_number": repeat_index + 1,
+                            "species_index": species_index + 1,
+                            "species": species_name,
+                            "experiment_number": exp_index + 1,
+                            "outlet_mass_fraction": Y_full[
+                                repeat_index,
+                                species_index,
+                                exp_index,
+                            ],
+                        }
+                    )
+
+    return pd.DataFrame(rows)
+
+
+def write_noise_sweep_summary_text(all_results, results_dir):
+    lines = [
+        "ROM/RBS MASS-KINETICS BOED NOISE SWEEP SUMMARY",
+        "",
+        f"Results folder: {results_dir}",
+        f"Noise levels: {', '.join(noise_label(noise) for noise in NOISE_LEVELS)}",
+        f"RBS_FULL: {RBS_FULL}",
+        f"N_INIT: {N_INIT}",
+        f"MAX_EXPERIMENTS: {MAX_EXPERIMENTS}",
+        f"N_CANDIDATES: {N_CANDIDATES}",
+        f"N_REPEATS: {N_REPEATS}",
+        "",
+    ]
+
+    for result in all_results:
+        final_params = np.asarray(result["final_params"], dtype=float)
+        abs_err = parameter_errors(final_params)
+        rel_err = relative_parameter_errors(final_params)
+        best_idx = int(np.argmax(result["y"]))
+
+        lines.extend(
+            [
+                "=" * 60,
+                "===== FINAL RESULTS SUMMARY =====",
+                "",
+                f"Noise level: {result['noise']:.0e}",
+                f"Total experiments used: {len(result['X'])}",
+                "",
+                "Final estimated parameters:",
+            ]
+        )
+
+        for i, value in enumerate(final_params):
+            lines.append(
+                f"  {PARAMETER_NAMES[i]} = {value:.6f} "
+                f"true={TRUE_K[i]:.6f} "
+                f"error={abs_err[i]:+.6e} "
+                f"rel_error={rel_err[i]:+.3e}"
+            )
+
+        lines.extend(
+            [
+                "",
+                "Best experiment by target output:",
+                f"  X = {np.array2string(np.asarray(result['X'][best_idx]), precision=8)}",
+                f"  target output = {result['y'][best_idx]:.6f}",
+                "",
+            ]
+        )
+
+    summary_path = results_dir / "final_results_summary.txt"
+    summary_path.write_text("\n".join(lines), encoding="utf-8")
+    return summary_path
+
+
+def export_noise_sweep_outputs(all_results, results_dir):
+    results_dir.mkdir(parents=True, exist_ok=True)
     excel_path = results_dir / "variable_explorer_data.xlsx"
 
     with pd.ExcelWriter(excel_path) as writer:
@@ -651,222 +778,167 @@ def export_results_to_excel(
             sheet_name="settings",
             index=False,
         )
-        build_final_summary_dataframe(X, y, final_params).to_excel(
+        build_noise_sweep_summary_dataframe(all_results).to_excel(
             writer,
-            sheet_name="final_summary",
+            sheet_name="noise_summary",
             index=False,
         )
-        build_final_parameters_dataframe(final_params).to_excel(
+        build_noise_sweep_final_parameters_dataframe(all_results).to_excel(
             writer,
             sheet_name="final_parameters",
             index=False,
         )
-        build_parameter_history_dataframe(param_history, param_exp_counts).to_excel(
+        build_noise_sweep_parameter_history_dataframe(all_results).to_excel(
             writer,
             sheet_name="parameter_history",
             index=False,
         )
-        build_design_dataframe(X, y).to_excel(
+        build_noise_sweep_design_dataframe(all_results).to_excel(
             writer,
             sheet_name="selected_designs",
             index=False,
         )
-        build_y_outputs_dataframe(Y_full).to_excel(
+        build_noise_sweep_y_outputs_dataframe(all_results).to_excel(
             writer,
             sheet_name="Y_outputs_flat",
             index=False,
         )
 
-    return excel_path
+    summary_path = write_noise_sweep_summary_text(all_results, results_dir)
 
-
-def write_summary_text(X, y, param_history, final_params, results_dir):
-    abs_err = parameter_errors(final_params)
-    rel_err = relative_parameter_errors(final_params)
-    best_idx = int(np.argmax(y))
-
-    lines = [
-        "ROM/RBS MASS-KINETICS BOED SUMMARY",
-        "",
-        f"Results folder: {results_dir}",
-        f"STD_DATA: {STD_DATA:.0e}",
-        f"RBS_FULL: {RBS_FULL}",
-        f"N_INIT: {N_INIT}",
-        f"MAX_EXPERIMENTS: {MAX_EXPERIMENTS}",
-        f"N_CANDIDATES: {N_CANDIDATES}",
-        f"N_REPEATS: {N_REPEATS}",
-        "",
-        "Estimator input check:",
-        "  experiments() receives each selected design as Y_in=(3, 1), "
-        "Temp=(1,).",
-        "  parameter_estimator() receives accumulated physical design arrays: "
-        "Y_in=(3, Nexps), Temp=(Nexps,), Y_out=(N_repeats, 3, Nexps).",
-        "  X_scaled is used only by the Python GP/EI surrogate and is not sent "
-        "to Julia.",
-        "",
-        "===== FINAL RESULTS SUMMARY =====",
-        "",
-        f"STD_DATA: {STD_DATA:.0e}",
-        f"Total experiments used: {len(X)}",
-        "",
-        "Final estimated parameters:",
-    ]
-
-    for i, value in enumerate(final_params):
-        lines.append(
-            f"  {PARAMETER_NAMES[i]} = {value:.6f} "
-            f"true={TRUE_K[i]:.6f} "
-            f"error={abs_err[i]:+.6e} "
-            f"rel_error={rel_err[i]:+.3e}"
-        )
-
-    lines.extend(
-        [
-            "",
-            "Best experiment by target output:",
-            f"  X = {np.array2string(np.asarray(X[best_idx]), precision=8)}",
-            f"  target output = {y[best_idx]:.6f}",
-            "",
-            "Parameter history:",
-        ]
-    )
-
-    for idx, params in enumerate(np.asarray(param_history, dtype=float)):
-        lines.append(
-            f"  step {idx + 1}: "
-            f"k1={params[0]:.6f}, "
-            f"k2={params[1]:.6f}"
-        )
-
-    summary_path = results_dir / "final_results_summary.txt"
-    summary_path.write_text("\n".join(lines), encoding="utf-8")
-    return summary_path
-
-
-def export_all_outputs(
-    X,
-    y,
-    Y_full,
-    param_history,
-    param_exp_counts,
-    final_params,
-    results_dir,
-):
-    excel_path = export_results_to_excel(
-        X,
-        y,
-        Y_full,
-        param_history,
-        param_exp_counts,
-        final_params,
-        results_dir,
-    )
-    summary_path = write_summary_text(X, y, param_history, final_params, results_dir)
-
-    print("\nSaved run outputs:")
-    print(f"  Results folder: {results_dir}")
+    print("\nSaved combined noise-sweep outputs:")
     print(f"  Excel data: {excel_path}")
     print(f"  Summary: {summary_path}")
 
 
-def plot_experiments(X, results_dir=None):
-    fig = plt.figure(figsize=(8, 5))
-    order = np.arange(1, len(X) + 1)
+def plot_experimental_points_distribution(all_results, results_dir=None):
+    fig, ax = plt.subplots(figsize=(9, 6))
 
-    plt.scatter(X[:, 0], X[:, -1], c=order, s=95, edgecolors="black")
-    plt.colorbar(label="Experiment order")
-    plt.xlabel("Y1 inlet mass fraction")
-    plt.ylabel("Temperature (K)")
-    plt.title("ROM/RBS Selected Experimental Designs")
-    plt.grid(True)
+    for result in all_results:
+        X = np.asarray(result["X"], dtype=float)
+        style = style_for_noise(result["noise"])
+
+        ax.scatter(
+            X[:, 0],
+            X[:, -1],
+            s=90,
+            alpha=0.85,
+            edgecolors="black",
+            linewidths=0.7,
+            label=f"noise {noise_label(result['noise'])}",
+            marker=style["marker"],
+            color=style["color"],
+        )
+        ax.plot(
+            X[:, 0],
+            X[:, -1],
+            alpha=0.45,
+            linewidth=1.2,
+            linestyle=style["linestyle"],
+            color=style["color"],
+        )
+
+    ax.set_xlabel("Y1 inlet mass fraction")
+    ax.set_ylabel("Temperature (K)")
+    ax.set_title("Experimental Points Distribution Across Noise Levels")
+    ax.grid(True)
+    ax.legend()
     plt.tight_layout()
-    save_and_show(fig, results_dir, "01_selected_designs_y1_temperature.png")
+    save_and_show(fig, results_dir, "01_experimental_points_distribution.png")
 
 
-def plot_target_output(y, results_dir=None):
-    fig = plt.figure(figsize=(8, 5))
-    exp_numbers = np.arange(1, len(y) + 1)
+def plot_noise_sweep_parameter_convergence(all_results, results_dir=None):
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharex=True)
 
-    plt.plot(exp_numbers, y, marker="o", linewidth=1.8, markersize=7)
-    plt.xlabel("Experiment number")
-    plt.ylabel("Target output fraction")
-    plt.title("Target Output Across Selected Experiments")
-    plt.grid(True)
-    plt.tight_layout()
-    save_and_show(fig, results_dir, "02_target_output_vs_experiment.png")
+    for result in all_results:
+        params = np.asarray(result["param_history"], dtype=float)
+        exp_counts = np.asarray(result["param_exp_counts"], dtype=int)
+        label = f"noise {noise_label(result['noise'])}"
+        style = style_for_noise(result["noise"])
 
-
-def plot_parameter_convergence(param_history, param_exp_counts, results_dir=None):
-    params = np.asarray(param_history, dtype=float)
-    exp_counts = np.asarray(param_exp_counts, dtype=int)
-
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        for param_index, ax in enumerate(axes):
+            ax.plot(
+                exp_counts,
+                params[:, param_index],
+                linewidth=1.8,
+                markersize=7,
+                label=label,
+                **style,
+            )
 
     for param_index, ax in enumerate(axes):
-        ax.plot(
-            exp_counts,
-            params[:, param_index],
-            marker="o",
-            linewidth=1.8,
-            markersize=7,
-            label=f"estimated {PARAMETER_NAMES[param_index]}",
-        )
-        ax.axhline(
-            TRUE_K[param_index],
-            color="black",
-            linestyle="--",
-            linewidth=1.2,
-            label=f"true {PARAMETER_NAMES[param_index]}",
-        )
-        ax.axhline(
-            INITIAL_GUESS[param_index],
-            color="gray",
-            linestyle=":",
-            linewidth=1.2,
-            label="initial guess",
-        )
+        ax.axhline(TRUE_K[param_index], color="black", linestyle="--", linewidth=1.2)
+        ax.axhline(INITIAL_GUESS[param_index], color="gray", linestyle=":", linewidth=1.2)
         ax.set_xlabel("Total experiments used")
-        ax.set_ylabel(PARAMETER_NAMES[param_index])
-        ax.set_title(f"Parameter Convergence: {PARAMETER_NAMES[param_index]}")
+        ax.set_ylabel(f"Estimated {PARAMETER_NAMES[param_index]}")
+        ax.set_title(f"{PARAMETER_NAMES[param_index]} Convergence")
         ax.grid(True)
         ax.legend()
 
     plt.tight_layout()
-    save_and_show(fig, results_dir, "03_parameter_convergence.png")
+    save_and_show(fig, results_dir, "02_parameter_convergence.png")
 
 
-def plot_parameter_errors(param_history, param_exp_counts, results_dir=None):
-    params = np.asarray(param_history, dtype=float)
-    exp_counts = np.asarray(param_exp_counts, dtype=int)
-    rel_err = relative_parameter_errors(params)
+def plot_noise_sweep_parameter_errors(all_results, results_dir=None):
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharex=True)
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    for result in all_results:
+        params = np.asarray(result["param_history"], dtype=float)
+        exp_counts = np.asarray(result["param_exp_counts"], dtype=int)
+        rel_err = relative_parameter_errors(params)
+        label = f"noise {noise_label(result['noise'])}"
+        style = style_for_noise(result["noise"])
+
+        for param_index, ax in enumerate(axes):
+            ax.plot(
+                exp_counts,
+                rel_err[:, param_index],
+                linewidth=1.8,
+                markersize=7,
+                label=label,
+                **style,
+            )
 
     for param_index, ax in enumerate(axes):
-        ax.plot(
-            exp_counts,
-            rel_err[:, param_index],
-            marker="o",
-            linewidth=1.8,
-            markersize=7,
-            label=f"{PARAMETER_NAMES[param_index]} relative error",
-        )
         ax.axhline(0.0, color="black", linestyle="--", linewidth=1.2)
         ax.set_xlabel("Total experiments used")
         ax.set_ylabel("(estimate - true) / |true|")
-        ax.set_title(f"Relative Error: {PARAMETER_NAMES[param_index]}")
+        ax.set_title(f"{PARAMETER_NAMES[param_index]} Relative Error")
         ax.grid(True)
         ax.legend()
 
     plt.tight_layout()
-    save_and_show(fig, results_dir, "04_parameter_relative_errors.png")
+    save_and_show(fig, results_dir, "03_parameter_relative_errors.png")
 
 
-def plot_all_results(X, y, param_history, param_exp_counts, results_dir=None):
-    plot_experiments(X, results_dir)
-    plot_target_output(y, results_dir)
-    plot_parameter_convergence(param_history, param_exp_counts, results_dir)
-    plot_parameter_errors(param_history, param_exp_counts, results_dir)
+def plot_noise_sweep_target_outputs(all_results, results_dir=None):
+    fig = plt.figure(figsize=(9, 5))
+
+    for result in all_results:
+        exp_numbers = np.arange(1, len(result["y"]) + 1)
+        plt.plot(
+            exp_numbers,
+            result["y"],
+            linewidth=1.8,
+            markersize=7,
+            label=f"noise {noise_label(result['noise'])}",
+            **style_for_noise(result["noise"]),
+        )
+
+    plt.xlabel("Experiment number")
+    plt.ylabel("Target output fraction")
+    plt.title("Target Output Across Noise Levels")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    save_and_show(fig, results_dir, "04_target_outputs.png")
+
+
+def plot_noise_sweep_results(all_results, results_dir=None):
+    plot_experimental_points_distribution(all_results, results_dir)
+    plot_noise_sweep_parameter_convergence(all_results, results_dir)
+    plot_noise_sweep_parameter_errors(all_results, results_dir)
+    plot_noise_sweep_target_outputs(all_results, results_dir)
 
 
 # ============================================================
@@ -876,19 +948,12 @@ def plot_all_results(X, y, param_history, param_exp_counts, results_dir=None):
 if __name__ == "__main__":
     all_results = []
     results_dir = RESULTS_DIR
+    results_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\nSaving all outputs to: {results_dir}\n")
 
-    X, y, Y_full, param_history, param_exp_counts = bayesian_optimization()
-    final_params = summarize_results(X, y, param_history)
+    for noise_level in NOISE_LEVELS:
+        all_results.append(run_single_noise_case(noise_level))
 
-    export_all_outputs(
-        X,
-        y,
-        Y_full,
-        param_history,
-        param_exp_counts,
-        final_params,
-        results_dir,
-    )
-    plot_all_results(X, y, param_history, param_exp_counts, results_dir)
+    export_noise_sweep_outputs(all_results, results_dir)
+    plot_noise_sweep_results(all_results, results_dir)

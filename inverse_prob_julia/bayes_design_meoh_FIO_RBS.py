@@ -1,37 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Jun 18 16:53:56 2026
+Created on Sat Jul 25 20:30:59 2026
 
 @author: jahna
 """
 
-# -*- coding: utf-8 -*-
-"""
-Corrected Fisher-information Bayesian OED driver for methanol production.
+from datetime import datetime
+from pathlib import Path
 
-This is the methanol analogue of bayes_design_ROM_FIO_corrected.py.
-
-Important methanol-specific point:
-    main_meoh.jl experiments() hardcodes the true methanol parameters.
-    Therefore, finite-difference sensitivities cannot be computed by passing
-    perturbed parameters into experiments(). This code calls Julia main(...)
-    directly with perturbed normalized k0 values, then extracts youts(...).
-
-Information objective:
-    F(x) = N_repeats / sigma^2 * J(x)^T J(x)
-    info(x) = 0.5 * [logdet(Prior + F(x)) - logdet(Prior)]
-
-where J = dY_out / dtheta, and theta is the normalized 9-parameter vector used
-internally by main_meoh.jl and newton_optimizer().
-
-Expected Julia noisy-data tensor shape:
-    Y_out = (N_repeats, Nspec, Nexps)
-
-Put this file and call_to_KPE_code_meoh_fio.py in inverse_prob_julia/.
-"""
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
+import pandas as pd
+
 from scipy.stats import norm
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel as C
@@ -70,6 +51,7 @@ TEMP_BOUNDS = (450.0, 550.0)
 PRESSURE_BOUNDS = (15.0, 50.0)
 
 RATIO = 0.1
+SCALE = 1.0
 N_REPEATS = 10
 
 # Physical methanol parameters from main_meoh.jl.
@@ -77,6 +59,40 @@ TRUE_PARAMS_PHYSICAL = np.array(
     [15672.02, 3453.38, 30.836, 558.532, 0.7439, 40000, 17197, 124119, 98084],
     dtype=float,
 )
+
+PARAMETER_NAMES = [
+    "Reaction 1 pre-exponential factor A1",
+    "Reaction 1 activation energy E1",
+    "Reaction 1 adsorption constant K_ads,1",
+    "Reaction 1 adsorption constant K_ads,2",
+    "Reaction 2 pre-exponential factor A2",
+    "Reaction 2 activation energy E2",
+    "Reaction 2 adsorption constant K_ads,3",
+    "Reaction 2 adsorption constant K_ads,4",
+    "Global inhibition / adsorption parameter",
+]
+
+PARAMETER_SHORT_NAMES = [
+    "A1",
+    "E1",
+    "K_ads,1",
+    "K_ads,2",
+    "A2",
+    "E2",
+    "K_ads,3",
+    "K_ads,4",
+    "Inhibition / adsorption",
+]
+
+DESIGN_AXIS_LABELS = [
+    "CO2 inlet mass fraction",
+    "H2 inlet mass fraction",
+    "H2O inlet mass fraction",
+    "CH3OH inlet mass fraction",
+    "CO inlet mass fraction",
+    "Temperature (K)",
+    "Total pressure (bar)",
+]
 
 PARAM_LOWER = np.array(
     [0.1, 0.1, 0.1, 0.1, 0.1, 1e4, 1e4, 1e4, 1e4],
@@ -111,9 +127,9 @@ INITIAL_GUESS_PHYSICAL = denormalize_params(INITIAL_GUESS_NORMALIZED)
 
 NOISE_LEVELS = [1e-5, 1e-6, 1e-7]
 
-N_INIT = 3
-MAX_EXPERIMENTS = 5
-N_CANDIDATES = 2
+N_INIT = 10
+MAX_EXPERIMENTS = 100
+N_CANDIDATES = 200
 
 ALLOW_EARLY_STOP_IN_SWEEP = False
 CONVERGENCE_TOL = 1e-3
@@ -136,12 +152,53 @@ GP_ALPHA = 1e-8
 EI_XI = 0.01
 MIN_SCALED_DISTANCE = 0.05  # slightly larger to reduce flooding
 
-RBS_FULL = False
+RBS_FULL = True
 
 NREF_INFORMATION = 2500
 NREF_ESTIMATION = 2500
 
+# All plots, Excel data, and text summaries are saved under this folder.
+PROJECT_DIR = Path(
+    r"C:\Users\jahna\OneDrive\Desktop\masters\master's thesis"
+    r"\Bayesian-OED\inverse_prob_julia"
+)
 
+RESULTS_FOLDER_NAME = "bayes_design_meoh_FIO_RBS"
+ADD_TIMESTAMP_TO_RESULTS_FOLDER = False
+
+folder_name = RESULTS_FOLDER_NAME
+if ADD_TIMESTAMP_TO_RESULTS_FOLDER:
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    folder_name = f"{RESULTS_FOLDER_NAME}_{stamp}"
+
+RESULTS_DIR = PROJECT_DIR / "results" / folder_name
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+SAVE_PLOTS = True
+SHOW_PLOTS = True
+PRINT_ESTIMATOR_SHAPES = True
+
+
+# ============================================================
+# OUTPUT HELPERS
+# ============================================================
+
+def noise_label(noise):
+    return f"{noise:.0e}"
+
+
+def safe_noise_label(noise):
+    return noise_label(noise).replace("-", "m").replace("+", "p")
+
+
+def save_and_show(fig, results_dir=None, filename=None):
+    if SAVE_PLOTS and results_dir is not None and filename is not None:
+        fig.savefig(results_dir / filename, dpi=300, bbox_inches="tight")
+
+    if SHOW_PLOTS:
+        plt.show()
+    else:
+        plt.close(fig)
 # ============================================================
 # CACHES FOR DETERMINISTIC MODEL CALLS
 # ============================================================
@@ -219,6 +276,7 @@ def deterministic_output(x, theta_normalized):
         raise ValueError(f"Invalid design vector: {x}")
 
     d = main_model(
+        scale=SCALE,
         nref=NREF_INFORMATION,
         inlet_MFs=np.asarray(Y_in, dtype=float),
         ratio=RATIO,
@@ -337,8 +395,10 @@ def run_noisy_experiment(x, noise_level):
 
     Y_in = np.asarray(Y_in, dtype=float).reshape(NSPEC, 1)
     Temp = np.asarray([Temp], dtype=float)
+    P_total_array = np.asarray([P_total], dtype=float)
 
     Yexp = experiments(
+        scale=SCALE,
         Y_in=Y_in,
         Temp=Temp,
         P_total=P_total,
@@ -388,6 +448,7 @@ def estimate_parameters_from_observations(
 
     kwargs = {
         "ratio": RATIO,
+        "scale": SCALE,
         "nspec": NSPEC,
         "Y_in": Y_in_all,
         "Temp": Temp_all,
@@ -535,6 +596,36 @@ def relative_parameter_error(params_physical):
     return (params_physical - TRUE_PARAMS_PHYSICAL) / denom
 
 
+def transformed_parameter_values(values, param_index):
+    """
+    Display transform used for parameter convergence plots.
+
+    p1-p5 are shown with natural log. p6-p9 are shown with log10.
+    This changes only plotting/export display values, not the optimizer.
+    """
+    values = np.asarray(values, dtype=float)
+
+    if np.any(values <= 0.0):
+        raise ValueError("Log transform requires positive parameter values.")
+
+    if param_index < 5:
+        return np.log(values), "ln(physical parameter value)", "Natural Log"
+
+    return np.log10(values), "log10(physical parameter value)", "Log10"
+
+
+def mixed_log_matrix(params_physical):
+    params_physical = np.asarray(params_physical, dtype=float)
+    transformed = np.zeros_like(params_physical, dtype=float)
+
+    for param_index in range(N_UNKNOWN_PARAMETERS):
+        transformed[:, param_index], _, _ = transformed_parameter_values(
+            params_physical[:, param_index],
+            param_index,
+        )
+
+    return transformed
+
 def check_parameter_convergence(param_history, tol=1e-3):
     if len(param_history) < 2:
         return False
@@ -549,14 +640,15 @@ def check_parameter_convergence(param_history, tol=1e-3):
 
 def BO(
     noise_level,
-    N_init=5,
-    max_experiments=10,
-    n_candidates=200,
-    allow_early_stop=True,
+    N_init=N_INIT,
+    max_experiments=MAX_EXPERIMENTS,
     tol=1e-3,
+    n_candidates=N_CANDIDATES,
+    allow_early_stop=ALLOW_EARLY_STOP_IN_SWEEP,
     rng_seed=None,
     initial_design=None,
 ):
+    
     print("\n=== INITIAL METHANOL FIO EXPERIMENTS ===")
     print(f"noise_level = {noise_level:.0e}")
 
@@ -628,42 +720,17 @@ def BO(
 
         print(f"\n--- BO Iteration: evaluating top-{len(X_batch)} candidates ---")
 
-        args_iterable = [(x_next, noise_level) for x_next in X_batch]
-
         y_new_list = []
         Yexp_new_list = []
 
-        if use_parallel and len(X_batch) > 1:
-            cpu_count = os.cpu_count() or 1
-            max_workers = max_workers_override or max(1, cpu_count - 1)
-            max_workers = min(max_workers, len(X_batch))
-
-            try:
-                with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
-                    for methanol_val, Yexp in executor.map(
-                        lambda args: run_noisy_experiment(*args),
-                        args_iterable,
-                    ):
-                        y_new_list.append(methanol_val)
-                        Yexp_new_list.append(Yexp)
-                        print(f"  Candidate done: methanol={methanol_val:.6f}")
-            except Exception as e:
-                print("Parallel execution failed, falling back to serial. Error:", e)
-                for x_next in X_batch:
-                    methanol_val, Yexp = run_noisy_experiment(
-                        x_next, noise_level=noise_level
-                    )
-                    y_new_list.append(methanol_val)
-                    Yexp_new_list.append(Yexp)
-                    print(f"  Candidate done (serial): methanol={methanol_val:.6f}")
-        else:
-            for x_next in X_batch:
-                methanol_val, Yexp = run_noisy_experiment(
-                    x_next, noise_level=noise_level
-                )
-                y_new_list.append(methanol_val)
-                Yexp_new_list.append(Yexp)
-                print(f"  Candidate done (serial): methanol={methanol_val:.6f}")
+        for x_next in X_batch:
+            methanol_val, Yexp = run_noisy_experiment(
+                x_next,
+                noise_level=noise_level,
+            )
+            y_new_list.append(methanol_val)
+            Yexp_new_list.append(Yexp)
+            print(f"  Candidate done: methanol={methanol_val:.6f}")
 
         info_new_list = []
         F_new_list = []
@@ -776,6 +843,327 @@ def run_noise_study():
     return results
 
 
+
+# ============================================================
+# EXPORTS
+# ============================================================
+
+def build_settings_dataframe():
+    settings = {
+        "results_dir": str(RESULTS_DIR),
+        "NSPEC": NSPEC,
+        "N_REACTIONS": N_REACTIONS,
+        "N_UNKNOWN_PARAMETERS": N_UNKNOWN_PARAMETERS,
+        "TARGET_SPECIES_INDEX_python": TARGET_SPECIES_INDEX,
+        "RATIO": RATIO,
+        "SCALE": SCALE,
+        "N_REPEATS": N_REPEATS,
+        "NOISE_LEVELS": ", ".join(noise_label(noise) for noise in NOISE_LEVELS),
+        "N_INIT": N_INIT,
+        "MAX_EXPERIMENTS": MAX_EXPERIMENTS,
+        "N_CANDIDATES": N_CANDIDATES,
+        "ALLOW_EARLY_STOP_IN_SWEEP": ALLOW_EARLY_STOP_IN_SWEEP,
+        "CONVERGENCE_TOL": CONVERGENCE_TOL,
+        "BASE_SEED": BASE_SEED,
+        "FD_REL_STEP": FD_REL_STEP,
+        "FD_ABS_STEP": FD_ABS_STEP,
+        "FIM_NOISE_FLOOR": FIM_NOISE_FLOOR,
+        "GP_ALPHA": GP_ALPHA,
+        "EI_XI": EI_XI,
+        "MIN_SCALED_DISTANCE": MIN_SCALED_DISTANCE,
+        "RBS_FULL": RBS_FULL,
+        "NREF_INFORMATION": NREF_INFORMATION,
+        "NREF_ESTIMATION": NREF_ESTIMATION,
+        "gp_scaled_X_passed_to_julia": False,
+    }
+    return pd.DataFrame(
+        [{"setting": key, "value": value} for key, value in settings.items()]
+    )
+
+
+def build_summary_dataframe(results):
+    rows = []
+
+    for noise, data in results.items():
+        final_params = np.asarray(data["param_history"][-1], dtype=float)
+        rel_errors = relative_parameter_error(final_params)
+        best_info_idx = int(np.argmax(data["point_information"]))
+        best_methanol_idx = int(np.argmax(data["methanol"]))
+
+        rows.append(
+            {
+                "noise": noise_label(noise),
+                "sigma": noise,
+                "n_experiments": len(data["X"]),
+                "best_point_information": float(data["point_information"][best_info_idx]),
+                "best_point_information_experiment": best_info_idx + 1,
+                "best_methanol": float(data["methanol"][best_methanol_idx]),
+                "best_methanol_experiment": best_methanol_idx + 1,
+                "final_cumulative_information": float(data["total_info_history"][-1]),
+                "rms_relative_parameter_error": float(
+                    np.linalg.norm(rel_errors) / np.sqrt(N_UNKNOWN_PARAMETERS)
+                ),
+                "max_abs_relative_parameter_error": float(np.max(np.abs(rel_errors))),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def build_final_parameters_dataframe(results):
+    rows = []
+
+    for noise, data in results.items():
+        final_params = np.asarray(data["param_history"][-1], dtype=float)
+        rel_errors = relative_parameter_error(final_params)
+
+        for i, value in enumerate(final_params):
+            final_transformed, ylabel, transform_name = transformed_parameter_values(
+                [value],
+                i,
+            )
+            true_transformed, _, _ = transformed_parameter_values(
+                [TRUE_PARAMS_PHYSICAL[i]],
+                i,
+            )
+            initial_transformed, _, _ = transformed_parameter_values(
+                [INITIAL_GUESS_PHYSICAL[i]],
+                i,
+            )
+
+            rows.append(
+                {
+                    "noise": noise_label(noise),
+                    "parameter": f"p{i + 1}",
+                    "short_name": PARAMETER_SHORT_NAMES[i],
+                    "full_name": PARAMETER_NAMES[i],
+                    "transform": transform_name,
+                    "transform_axis_label": ylabel,
+                    "true_physical": TRUE_PARAMS_PHYSICAL[i],
+                    "initial_guess_physical": INITIAL_GUESS_PHYSICAL[i],
+                    "final_estimate_physical": value,
+                    "relative_error": rel_errors[i],
+                    "true_transformed": true_transformed[0],
+                    "initial_guess_transformed": initial_transformed[0],
+                    "final_estimate_transformed": final_transformed[0],
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+def build_parameter_history_dataframe(results):
+    rows = []
+
+    for noise, data in results.items():
+        params = np.asarray(data["param_history"], dtype=float)
+        exp_counts = np.asarray(data["param_exp_counts"], dtype=int)
+
+        for row_index, exp_count in enumerate(exp_counts):
+            rel_errors = relative_parameter_error(params[row_index])
+
+            for i in range(N_UNKNOWN_PARAMETERS):
+                estimate_transformed, ylabel, transform_name = transformed_parameter_values(
+                    [params[row_index, i]],
+                    i,
+                )
+
+                rows.append(
+                    {
+                        "noise": noise_label(noise),
+                        "total_experiments_used": int(exp_count),
+                        "parameter": f"p{i + 1}",
+                        "short_name": PARAMETER_SHORT_NAMES[i],
+                        "full_name": PARAMETER_NAMES[i],
+                        "transform": transform_name,
+                        "transform_axis_label": ylabel,
+                        "estimate_physical": params[row_index, i],
+                        "true_physical": TRUE_PARAMS_PHYSICAL[i],
+                        "relative_error": rel_errors[i],
+                        "estimate_transformed": estimate_transformed[0],
+                    }
+                )
+
+    return pd.DataFrame(rows)
+
+
+def build_design_dataframe(results):
+    rows = []
+    species_names = ["CO2", "H2", "H2O", "CH3OH", "CO", "N2"]
+
+    for noise, data in results.items():
+        for exp_index, x in enumerate(np.asarray(data["X"], dtype=float)):
+            Y_full, Temp, P_total = decode_design_vector(x)
+            row = {
+                "noise": noise_label(noise),
+                "experiment_number": exp_index + 1,
+                "point_information": data["point_information"][exp_index],
+                "methanol_outlet_fraction": data["methanol"][exp_index],
+                "temperature_K": Temp,
+                "total_pressure_bar": P_total,
+            }
+
+            for species_index, species_name in enumerate(species_names):
+                row[f"{species_name}_inlet_mass_fraction"] = Y_full[species_index]
+
+            rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def build_information_history_dataframe(results):
+    rows = []
+
+    for noise, data in results.items():
+        for i, exp_count in enumerate(data["param_exp_counts"]):
+            rows.append(
+                {
+                    "noise": noise_label(noise),
+                    "total_experiments_used": int(exp_count),
+                    "cumulative_information": data["total_info_history"][i],
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+def build_y_outputs_dataframe(results):
+    rows = []
+    species_names = ["CO2", "H2", "H2O", "CH3OH", "CO", "N2"]
+
+    for noise, data in results.items():
+        Y_full = np.asarray(data["Y_full"], dtype=float)
+
+        for repeat_index in range(Y_full.shape[0]):
+            for species_index, species_name in enumerate(species_names):
+                for exp_index in range(Y_full.shape[2]):
+                    rows.append(
+                        {
+                            "noise": noise_label(noise),
+                            "repeat_number": repeat_index + 1,
+                            "species_index": species_index + 1,
+                            "species": species_name,
+                            "experiment_number": exp_index + 1,
+                            "outlet_mass_fraction": Y_full[
+                                repeat_index,
+                                species_index,
+                                exp_index,
+                            ],
+                        }
+                    )
+
+    return pd.DataFrame(rows)
+
+def export_results_to_excel(results):
+    excel_path = RESULTS_DIR / "variable_explorer_data.xlsx"
+
+    with pd.ExcelWriter(excel_path) as writer:
+        build_settings_dataframe().to_excel(writer, sheet_name="settings", index=False)
+        build_summary_dataframe(results).to_excel(
+            writer,
+            sheet_name="noise_summary",
+            index=False,
+        )
+        build_final_parameters_dataframe(results).to_excel(
+            writer,
+            sheet_name="final_parameters",
+            index=False,
+        )
+        build_parameter_history_dataframe(results).to_excel(
+            writer,
+            sheet_name="parameter_history",
+            index=False,
+        )
+        build_design_dataframe(results).to_excel(
+            writer,
+            sheet_name="selected_designs",
+            index=False,
+        )
+        build_information_history_dataframe(results).to_excel(
+            writer,
+            sheet_name="information_history",
+            index=False,
+        )
+        build_y_outputs_dataframe(results).to_excel(
+            writer,
+            sheet_name="Y_outputs_flat",
+            index=False,
+        )
+
+    return excel_path
+
+def write_summary_text(results):
+    lines = [
+        "===== METHANOL FIO NOISE SWEEP SUMMARY =====",
+        "",
+        f"Results folder: {RESULTS_DIR}",
+        f"Noise levels: {', '.join(noise_label(noise) for noise in NOISE_LEVELS)}",
+        f"N_INIT: {N_INIT}",
+        f"MAX_EXPERIMENTS: {MAX_EXPERIMENTS}",
+        f"N_CANDIDATES: {N_CANDIDATES}",
+        f"N_REPEATS: {N_REPEATS}",
+        f"RBS_FULL: {RBS_FULL}",
+        "",
+    ]
+
+    for noise, data in results.items():
+        final_params = np.asarray(data["param_history"][-1], dtype=float)
+        rel_errors = relative_parameter_error(final_params)
+        rel_norm = np.linalg.norm(rel_errors) / np.sqrt(N_UNKNOWN_PARAMETERS)
+        best_info_idx = int(np.argmax(data["point_information"]))
+        best_methanol_idx = int(np.argmax(data["methanol"]))
+
+        lines.extend(
+            [
+                "=" * 60,
+                "===== FINAL RESULTS SUMMARY =====",
+                "",
+                f"noise sigma = {noise:.0e}",
+                f"Total experiments used: {len(data['X'])}",
+                f"RMS relative parameter error = {rel_norm:.6e}",
+                "",
+                "Final physical parameters:",
+            ]
+        )
+
+        for i, value in enumerate(final_params):
+            lines.append(
+                f"  p{i + 1}: {value:.6e} "
+                f"true={TRUE_PARAMS_PHYSICAL[i]:.6e} "
+                f"rel_error={rel_errors[i]:+.3e}"
+            )
+
+        lines.extend(
+            [
+                "",
+                "Best pointwise-information experiment:",
+                f"  X = {np.array2string(data['X'][best_info_idx], precision=8)}",
+                f"  Point information = {data['point_information'][best_info_idx]:.6f}",
+                "",
+                "Best methanol-output experiment:",
+                f"  X = {np.array2string(data['X'][best_methanol_idx], precision=8)}",
+                f"  Methanol = {data['methanol'][best_methanol_idx]:.6f}",
+                "",
+                f"Final cumulative information = {data['total_info_history'][-1]:.6f}",
+                "",
+            ]
+        )
+
+    summary_path = RESULTS_DIR / "final_results_summary.txt"
+    summary_path.write_text("\n".join(lines), encoding="utf-8")
+    return summary_path
+
+
+def export_all_outputs(results):
+    excel_path = export_results_to_excel(results)
+    summary_path = write_summary_text(results)
+
+    print("\nSaved outputs:")
+    print(f"  Folder: {RESULTS_DIR}")
+    print(f"  Excel: {excel_path}")
+    print(f"  Summary: {summary_path}")
+
+
 # ============================================================
 # PLOTS
 # ============================================================
@@ -790,6 +1178,146 @@ def _apply_plain_axis(ax):
     ax.yaxis.set_major_formatter(formatter)
     ax.ticklabel_format(axis="y", style="plain", useOffset=False)
 
+
+def style_for_noise(noise):
+    colors = {1e-5: "tab:blue", 1e-6: "tab:orange", 1e-7: "tab:green"}
+    markers = {1e-5: "o", 1e-6: "s", 1e-7: "^"}
+    linestyles = {1e-5: "-", 1e-6: "--", 1e-7: "-."}
+
+    return {
+        "color": colors.get(noise),
+        "marker": markers.get(noise, "o"),
+        "linestyle": linestyles.get(noise, "-"),
+    }
+
+
+def marker_size_for_noise(noise):
+    return 9 if np.isclose(noise, 1e-5) else 7
+
+
+def plot_parameters_mixed_log(results):
+    for param_index in range(N_UNKNOWN_PARAMETERS):
+        fig = plt.figure(figsize=(8, 5))
+        true_value, ylabel, transform_name = transformed_parameter_values(
+            [TRUE_PARAMS_PHYSICAL[param_index]],
+            param_index,
+        )
+        initial_value, _, _ = transformed_parameter_values(
+            [INITIAL_GUESS_PHYSICAL[param_index]],
+            param_index,
+        )
+
+        for noise, data in results.items():
+            params = np.asarray(data["param_history"], dtype=float)
+            exp_counts = np.asarray(data["param_exp_counts"], dtype=int)
+            values, _, _ = transformed_parameter_values(params[:, param_index], param_index)
+            style = style_for_noise(noise)
+
+            plt.plot(
+                exp_counts,
+                values,
+                linewidth=1.8,
+                markersize=marker_size_for_noise(noise),
+                markerfacecolor="none",
+                markeredgewidth=1.6,
+                label=f"sigma={noise_label(noise)}",
+                **style,
+            )
+
+        plt.axhline(
+            true_value[0],
+            color="black",
+            linestyle="--",
+            linewidth=1.2,
+            label="true value",
+        )
+        plt.axhline(
+            initial_value[0],
+            color="gray",
+            linestyle=":",
+            linewidth=1.2,
+            label="initial guess",
+        )
+        plt.xlabel("Total experiments used")
+        plt.ylabel(ylabel)
+        plt.title(
+            f"Methanol FIO p{param_index + 1}: "
+            f"{PARAMETER_SHORT_NAMES[param_index]} {transform_name} Convergence"
+        )
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
+        filename = f"01_p{param_index + 1:02d}_mixed_log_convergence.png"
+        save_and_show(fig, RESULTS_DIR, filename)
+
+def plot_relative_parameter_errors(results):
+    for param_index in range(N_UNKNOWN_PARAMETERS):
+        fig = plt.figure(figsize=(8, 5))
+
+        for noise, data in results.items():
+            params = np.asarray(data["param_history"], dtype=float)
+            exp_counts = np.asarray(data["param_exp_counts"], dtype=int)
+            rel_err = relative_parameter_error(params)[:, param_index]
+            style = style_for_noise(noise)
+
+            plt.plot(
+                exp_counts,
+                rel_err,
+                linewidth=1.8,
+                markersize=marker_size_for_noise(noise),
+                markerfacecolor="none",
+                markeredgewidth=1.6,
+                label=f"sigma={noise_label(noise)}",
+                **style,
+            )
+
+        plt.axhline(0.0, color="black", linestyle="--", linewidth=1.2)
+        plt.yscale("symlog", linthresh=1e-3)
+        plt.xlabel("Total experiments used")
+        plt.ylabel("(estimate - true) / |true|")
+        plt.title(
+            f"Methanol FIO p{param_index + 1}: "
+            f"{PARAMETER_SHORT_NAMES[param_index]} Relative Error"
+        )
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
+        filename = f"02_p{param_index + 1:02d}_relative_error.png"
+        save_and_show(fig, RESULTS_DIR, filename)
+
+
+def plot_mixed_log_parameter_error(results):
+    fig = plt.figure(figsize=(9, 6))
+    true_mixed = mixed_log_matrix(TRUE_PARAMS_PHYSICAL.reshape(1, -1))[0]
+
+    for noise, data in results.items():
+        params = np.asarray(data["param_history"], dtype=float)
+        exp_counts = np.asarray(data["param_exp_counts"], dtype=int)
+        params_mixed = mixed_log_matrix(params)
+        errors = np.linalg.norm(params_mixed - true_mixed, axis=1) / np.sqrt(
+            N_UNKNOWN_PARAMETERS
+        )
+        style = style_for_noise(noise)
+
+        plt.plot(
+            exp_counts,
+            errors,
+            linewidth=1.8,
+            markersize=marker_size_for_noise(noise),
+            markerfacecolor="none",
+            markeredgewidth=1.6,
+            label=f"sigma={noise_label(noise)}",
+            **style,
+        )
+
+    plt.yscale("log")
+    plt.xlabel("Total experiments used")
+    plt.ylabel("RMS mixed-log parameter error")
+    plt.title("Methanol FIO Overall Parameter Error in Mixed Log Space")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    save_and_show(fig, RESULTS_DIR, "03_overall_mixed_log_parameter_error.png")
 
 def plot_absolute_parameter_errors(results):
     fig, axes = plt.subplots(3, 3, figsize=(14, 10), sharex=True)
@@ -816,11 +1344,11 @@ def plot_absolute_parameter_errors(results):
     axes[0].legend()
     fig.suptitle("Methanol FIO Parameter Absolute Error |p - p_true|")
     fig.tight_layout()
-    plt.show()
+    save_and_show(fig, RESULTS_DIR, "04_absolute_parameter_errors.png")
 
 
 def plot_rms_absolute_parameter_error(results):
-    plt.figure(figsize=(9, 6))
+    fig = plt.figure(figsize=(9, 6))
 
     for noise, data in results.items():
         params = data["param_history"]
@@ -844,11 +1372,11 @@ def plot_rms_absolute_parameter_error(results):
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.show()
+    save_and_show(fig, RESULTS_DIR, "05_rms_absolute_parameter_error.png")
 
 
 def plot_information_gain(results):
-    plt.figure(figsize=(9, 6))
+    fig = plt.figure(figsize=(9, 6))
 
     for noise, data in results.items():
         plt.plot(
@@ -865,11 +1393,11 @@ def plot_information_gain(results):
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.show()
+    save_and_show(fig, RESULTS_DIR, "06_cumulative_information_gain.png")
 
 
 def plot_best_point_information(results):
-    plt.figure(figsize=(9, 6))
+    fig = plt.figure(figsize=(9, 6))
 
     for noise, data in results.items():
         x_axis = np.arange(1, len(data["point_information"]) + 1)
@@ -889,11 +1417,12 @@ def plot_best_point_information(results):
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.show()
+    save_and_show(fig, RESULTS_DIR, "07_best_point_information.png")
+
 
 
 def plot_methanol_outputs(results):
-    plt.figure(figsize=(9, 6))
+    fig = plt.figure(figsize=(9, 6))
 
     for noise, data in results.items():
         x_axis = np.arange(1, len(data["methanol"]) + 1)
@@ -912,14 +1441,20 @@ def plot_methanol_outputs(results):
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.show()
+    save_and_show(fig, RESULTS_DIR, "08_methanol_outputs.png")
 
 
 if __name__ == "__main__":
+    print(f"\nSaving all outputs to: {RESULTS_DIR}\n")
+    
     results = run_noise_study()
+    export_all_outputs(results)
+    
+    plot_parameters_mixed_log(results)
+    plot_relative_parameter_errors(results)
+    plot_mixed_log_parameter_error(results)
     plot_absolute_parameter_errors(results)
     plot_rms_absolute_parameter_error(results)
     plot_information_gain(results)
     plot_best_point_information(results)
     plot_methanol_outputs(results)
-
