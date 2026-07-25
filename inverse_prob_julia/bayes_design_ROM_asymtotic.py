@@ -1,16 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Cleaned Bayesian OED driver for the 3-species ROM/RBS mass-kinetics problem.
+Created on Sun Apr 26 11:02:33 2026
 
-This version keeps the original ROM/RBS model structure, but adds:
-- one results folder per run,
-- saved plots,
-- Excel export for variable-explorer style data,
-- full text summary,
-- cleaner global settings,
-- physical design values passed to Julia, with GP scaling used only in Python.
+@author: jahna
 """
-
 from datetime import datetime
 from pathlib import Path
 
@@ -51,7 +44,7 @@ P_TOTAL = 50.0
 RATIO = 0.1
 STD_DATA = 1e-6
 N_REPEATS = 10
-RBS_FULL = True
+RBS_FULL = False
 
 N_INIT = 10
 MAX_EXPERIMENTS = 100
@@ -68,7 +61,7 @@ PROJECT_DIR = Path(
     r"\Bayesian-OED\inverse_prob_julia"
 )
 
-RESULTS_FOLDER_NAME = "bayes_design_ROM_RBS"
+RESULTS_FOLDER_NAME = "bayes_design_ROM_asymtotic"
 ADD_TIMESTAMP_TO_RESULTS_FOLDER = False
 
 folder_name = RESULTS_FOLDER_NAME

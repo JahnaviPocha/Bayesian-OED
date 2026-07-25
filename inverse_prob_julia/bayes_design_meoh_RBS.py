@@ -132,7 +132,7 @@ EI_XI = 0.01
 # RBS_full=true appears incomplete in main_meoh.jl because rbs_snapshot is not
 # filled before being passed to newton_optimizer. main_meoh complete_workflow()
 # uses RBS_full=false, so that is the safe default here too.
-RBS_FULL = False
+RBS_FULL = True
 
 # All plots, Excel data, and text summaries are saved under this folder.
 PROJECT_DIR = Path(
@@ -140,7 +140,7 @@ PROJECT_DIR = Path(
     r"\Bayesian-OED\inverse_prob_julia"
 )
 
-RESULTS_FOLDER_NAME = "bayes_design_meoh_asymptotic"
+RESULTS_FOLDER_NAME = "bayes_design_meoh_RBS"
 ADD_TIMESTAMP_TO_RESULTS_FOLDER = False
 
 folder_name = RESULTS_FOLDER_NAME
@@ -1328,5 +1328,6 @@ if __name__ == "__main__":
     print_noise_sweep_table(all_results)
     export_all_outputs(all_results, results_dir, shared_initial_design)
     plot_noise_sweep(all_results, results_dir)
+
 
     
