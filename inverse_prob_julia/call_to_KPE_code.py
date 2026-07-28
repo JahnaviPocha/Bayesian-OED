@@ -1,8 +1,14 @@
-from juliacall import Pkg as jlPkg
+from pathlib import Path
+
 from juliacall import Main as jl
 
+jl.seval("import Pkg")
+jlPkg = jl.Pkg
+
+PROJECT_DIR = Path(__file__).resolve().parent
+
 # 1. Activate your local thesis environment
-jlPkg.activate("C:/Users/jahna/OneDrive/Desktop/masters/master's thesis/Bayesian-OED/inverse_prob_julia")
+jlPkg.activate(str(PROJECT_DIR))
 
 # 2. Safely remove old references if they exist, ignoring errors if they don't
 #for pkg in ["HSL", "HSL_jll"]:
@@ -17,7 +23,7 @@ jlPkg.activate("C:/Users/jahna/OneDrive/Desktop/masters/master's thesis/Bayesian
 jlPkg.instantiate()
 
 # 4. Include and load your workspace models
-jl.include("scripts/main.jl") 
+jl.include(str(PROJECT_DIR / "scripts" / "main.jl"))
 
 # 5. Extract your functions
 rpg = jl.Example_Inverse_Problem_Validation_2D.random_points_generator

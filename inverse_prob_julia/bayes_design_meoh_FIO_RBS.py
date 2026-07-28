@@ -158,10 +158,7 @@ NREF_INFORMATION = 2500
 NREF_ESTIMATION = 2500
 
 # All plots, Excel data, and text summaries are saved under this folder.
-PROJECT_DIR = Path(
-    r"C:\Users\jahna\OneDrive\Desktop\masters\master's thesis"
-    r"\Bayesian-OED\inverse_prob_julia"
-)
+PROJECT_DIR = Path(__file__).resolve().parent
 
 RESULTS_FOLDER_NAME = "bayes_design_meoh_FIO_RBS"
 ADD_TIMESTAMP_TO_RESULTS_FOLDER = False

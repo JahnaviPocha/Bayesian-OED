@@ -108,7 +108,8 @@ function compute_rbs_coeffs_n!(k; st, scale, Temp, yin, Y_snap, Ncat_cells, nrea
             return reshape(sol.u, nreacs, Ncat_cells)
         end
     end
-    println("solver failed !")
+    #
+    #println("solver failed !")
     return fill(0.01, nreacs, Ncat_cells)
 
 end

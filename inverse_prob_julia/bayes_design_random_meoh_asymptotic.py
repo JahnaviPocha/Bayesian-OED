@@ -68,10 +68,7 @@ ADD_TIMESTAMP_TO_RESULTS_FOLDER = False
 SAVE_PLOTS = True
 SHOW_PLOTS = True
 
-PROJECT_DIR = Path(
-    r"C:\Users\jahna\OneDrive\Desktop\masters\master's thesis"
-    r"\Bayesian-OED\inverse_prob_julia"
-)
+PROJECT_DIR = Path(__file__).resolve().parent
 
 folder_name = RESULTS_FOLDER_NAME
 if ADD_TIMESTAMP_TO_RESULTS_FOLDER:

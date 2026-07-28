@@ -37,12 +37,9 @@ RATIO = 0.1
 ST = np.array([[-2.0, -1.0, 2.0]])
 SCALE = 1.0
 
-PROJECT_DIR = Path(
-    r"C:\Users\jahna\OneDrive\Desktop\masters\master's thesis"
-    r"\Bayesian-OED\inverse_prob_julia"
-)
+PROJECT_DIR = Path(__file__).resolve().parent
 
-RESULTS_FOLDER_NAME = "bayes_design_random_ROM_RBS"
+RESULTS_FOLDER_NAME = "bayes_design_random_ROM_asymptotic"
 ADD_TIMESTAMP_TO_RESULTS_FOLDER = False
 
 folder_name = RESULTS_FOLDER_NAME

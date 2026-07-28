@@ -30,10 +30,7 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel as C
 from sklearn.gaussian_process.kernels import RBF
 
-PROJECT_DIR = Path(
-    r"C:\Users\jahna\OneDrive\Desktop\masters\master's thesis"
-    r"\Bayesian-OED\inverse_prob_julia"
-)
+PROJECT_DIR = Path(__file__).resolve().parent
 
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
