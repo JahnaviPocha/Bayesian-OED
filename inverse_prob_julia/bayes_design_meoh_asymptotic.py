@@ -5,10 +5,17 @@ Created on Wed Jul 22 12:41:25 2026
 @author: jahna
 """
 
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing as mp
+
+
 from datetime import datetime
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
@@ -135,10 +142,7 @@ EI_XI = 0.01
 RBS_FULL = False
 
 # All plots, Excel data, and text summaries are saved under this folder.
-PROJECT_DIR = Path(
-    r"C:\Users\jahna\OneDrive\Desktop\masters\master's thesis"
-    r"\Bayesian-OED\inverse_prob_julia"
-)
+PROJECT_DIR = Path(__file__).resolve().parent
 
 RESULTS_FOLDER_NAME = "bayes_design_meoh_asymptotic"
 ADD_TIMESTAMP_TO_RESULTS_FOLDER = False
@@ -152,9 +156,11 @@ RESULTS_DIR = PROJECT_DIR / "results" / folder_name
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 SAVE_PLOTS = True
-SHOW_PLOTS = True
+SHOW_PLOTS = False
 PRINT_ESTIMATOR_SHAPES = True
 
+RUN_NOISES_IN_PARALLEL = True
+MAX_PARALLEL_NOISES = 3
 
 # ============================================================
 # OUTPUT HELPERS
@@ -616,7 +622,7 @@ SPECIES_NAMES = ["CO2", "H2", "H2O", "CH3OH", "CO", "N2"]
 
 def style_for_noise(noise):
     return {
-        "color": NOISE_COLORS.get(noise, None),
+        "color": NOISE_COLORS.get(noise),
         "marker": NOISE_MARKERS.get(noise, "o"),
         "linestyle": NOISE_LINESTYLES.get(noise, "-"),
     }
@@ -1287,44 +1293,72 @@ def plot_noise_sweep(all_results, results_dir=None):
 # ============================================================
 # MAIN DRIVER
 # ============================================================
-
-if __name__ == "__main__":
-    all_results = []
-    results_dir = RESULTS_DIR
-
-    print(f"\nSaving all outputs to: {results_dir}\n")
-
+def run_single_noise_case(noise_level):
     initial_rng = np.random.default_rng(BASE_SEED)
     shared_initial_design = generate_initial_design(N_INIT, rng=initial_rng)
 
-    for noise in NOISE_LEVELS:
-        print("\n")
-        print("=" * 60)
-        print(f"RUNNING METHANOL BOED FOR NOISE = {noise:.0e}")
-        print("=" * 60)
+    print("\n")
+    print("=" * 60)
+    print(f"RUNNING METHANOL BOED FOR NOISE = {noise_level:.0e}")
+    print("=" * 60)
 
-        X, y, Y_full, param_history, param_exp_counts = bayesian_optimization(
-            noise_level=noise,
-            rng_seed=BASE_SEED,
-            initial_design=shared_initial_design,
-        )
+    X, y, Y_full, param_history, param_exp_counts = bayesian_optimization(
+        noise_level=noise_level,
+        rng_seed=BASE_SEED,
+        initial_design=shared_initial_design,
+    )
 
-        final_params = summarize_results(noise, X, y, param_history)
+    final_params = summarize_results(noise_level, X, y, param_history)
 
-        all_results.append(
-            {
-                "noise": noise,
-                "X": X,
-                "y": y,
-                "Y_full": Y_full,
-                "params": param_history,
-                "param_exp_counts": param_exp_counts,
-                "final_params": final_params,
+    return {
+        "noise": noise_level,
+        "X": X,
+        "y": y,
+        "Y_full": Y_full,
+        "params": param_history,
+        "param_exp_counts": param_exp_counts,
+        "final_params": final_params,
+    }
+
+
+def run_noise_worker(noise_level):
+    return run_single_noise_case(noise_level)
+
+
+
+if __name__ == "__main__":
+    mp.freeze_support()
+
+    all_results = []
+    results_dir = RESULTS_DIR
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"\nSaving all outputs to: {results_dir}\n")
+    
+    if RUN_NOISES_IN_PARALLEL:
+        ctx = mp.get_context("spawn")
+
+        with ProcessPoolExecutor(
+            max_workers=MAX_PARALLEL_NOISES,
+            mp_context=ctx,
+        ) as executor:
+            future_to_noise = {
+                executor.submit(run_noise_worker, noise): noise
+                for noise in NOISE_LEVELS
             }
-        )
+
+            for future in as_completed(future_to_noise):
+                noise = future_to_noise[future]
+                print(f"\nCollecting finished noise case: {noise:.0e}")
+                all_results.append(future.result())
+
+        all_results.sort(key=lambda result: NOISE_LEVELS.index(result["noise"]))
+
+    else:
+        for noise_level in NOISE_LEVELS:
+            all_results.append(run_single_noise_case(noise_level))
 
     print_noise_sweep_table(all_results)
-    export_all_outputs(all_results, results_dir, shared_initial_design)
+    export_all_outputs(all_results, results_dir, shared_initial_design=None)
     plot_noise_sweep(all_results, results_dir)
-
     

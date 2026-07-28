@@ -24,23 +24,27 @@ Expected Julia tensor shape:
 
 Put this file in inverse_prob_julia/ next to call_to_KPE_code.py before running.
 """
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing as mp
+
+
 from datetime import datetime
 from pathlib import Path
 import sys
-
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
+
 from scipy.stats import norm
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel as C
 from sklearn.gaussian_process.kernels import RBF
 
-PROJECT_DIR = Path(
-    r"C:\Users\jahna\OneDrive\Desktop\masters\master's thesis"
-    r"\Bayesian-OED\inverse_prob_julia"
-)
+PROJECT_DIR = Path(__file__).resolve().parent
 
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
@@ -72,10 +76,12 @@ SCALE = 1.0
 STOICHIOMETRY = np.array([[-2.0, -1.0, 2.0]], dtype=float)
 
 N_REPEATS = 10
-NOISE_LEVELS = [1e-3, 1e-5, 1e-7]
+NOISE_LEVELS = [1e-3, 1e-4, 1e-5]
+RUN_NOISES_IN_PARALLEL = True
+MAX_PARALLEL_NOISES = min(len(NOISE_LEVELS), 3)
 
-N_INIT = 10
-MAX_EXPERIMENTS = 100
+N_INIT = 3
+MAX_EXPERIMENTS = 15
 N_CANDIDATES = 200
 MAX_BATCH_SIZE = 2
 
@@ -100,7 +106,7 @@ MIN_SCALED_DISTANCE = 0.03
 
 RBS_FULL = False
 
-RESULTS_FOLDER_NAME = "bayes_design_ROM_FIO_asymptotic"
+RESULTS_FOLDER_NAME = "bayes_design_ROM_FIO_RBS"
 ADD_TIMESTAMP_TO_RESULTS_FOLDER = False
 
 folder_name = RESULTS_FOLDER_NAME
@@ -112,7 +118,7 @@ RESULTS_DIR = PROJECT_DIR / "results" / folder_name
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 SAVE_PLOTS = True
-SHOW_PLOTS = True
+SHOW_PLOTS = False
 PRINT_ESTIMATOR_SHAPES = True
 
 
@@ -1071,9 +1077,9 @@ def _apply_plain_axis(ax):
 
 
 def style_for_noise(noise):
-    colors = {1e-3: "tab:blue", 1e-5: "tab:orange", 1e-7: "tab:green"}
-    markers = {1e-3: "o", 1e-5: "s", 1e-7: "^"}
-    linestyles = {1e-3: "-", 1e-5: "--", 1e-7: "-."}
+    colors = {1e-3: "tab:blue", 1e-4: "tab:orange", 1e-5: "tab:green"}
+    markers = {1e-3: "o", 1e-4: "s", 1e-5: "^"}
+    linestyles = {1e-3: "-", 1e-4: "--", 1e-5: "-."}
 
     return {
         "color": colors.get(noise),
@@ -1272,9 +1278,56 @@ def plot_all(results):
 # ============================================================
 # RUN
 # ============================================================
+def run_noise_worker(noise):
+    initial_rng = np.random.default_rng(BASE_SEED)
+    shared_initial_design = generate_initial_design(N_INIT, rng=initial_rng)
+
+    result = BO(
+        noise_level=noise,
+        N_init=N_INIT,
+        max_experiments=MAX_EXPERIMENTS,
+        n_candidates=N_CANDIDATES,
+        allow_early_stop=ALLOW_EARLY_STOP_IN_SWEEP,
+        tol=CONVERGENCE_TOL,
+        rng_seed=BASE_SEED,
+        initial_design=shared_initial_design,
+    )
+
+    return noise, result
+
 
 if __name__ == "__main__":
-    print(f"\nSaving all outputs to: {RESULTS_DIR}\n")
-    results = run_noise_study()
+    mp.freeze_support()
+
+    results_dir = RESULTS_DIR
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"\nSaving all outputs to: {results_dir}\n")
+
+    if RUN_NOISES_IN_PARALLEL:
+        results = {}
+        ctx = mp.get_context("spawn")
+
+        with ProcessPoolExecutor(
+            max_workers=MAX_PARALLEL_NOISES,
+            mp_context=ctx,
+        ) as executor:
+            future_to_noise = {
+                executor.submit(run_noise_worker, noise): noise
+                for noise in NOISE_LEVELS
+            }
+
+            for future in as_completed(future_to_noise):
+                noise = future_to_noise[future]
+                print(f"\nCollecting finished noise case: {noise:.0e}")
+
+                finished_noise, result = future.result()
+                results[finished_noise] = result
+
+        results = {noise: results[noise] for noise in NOISE_LEVELS}
+
+    else:
+        results = run_noise_study()
+
     export_all_outputs(results)
     plot_all(results)

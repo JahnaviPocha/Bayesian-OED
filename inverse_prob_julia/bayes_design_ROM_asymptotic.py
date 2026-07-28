@@ -4,10 +4,19 @@ Created on Sun Apr 26 11:02:33 2026
 
 @author: jahna
 """
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing as mp
+
+
 from datetime import datetime
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+
+
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
@@ -49,8 +58,8 @@ STD_DATA = NOISE_LEVELS[0]  # Active noise level, updated inside the sweep.
 N_REPEATS = 10
 RBS_FULL = False
 
-N_INIT = 10
-MAX_EXPERIMENTS = 100
+N_INIT = 3
+MAX_EXPERIMENTS = 15
 N_CANDIDATES = 200
 BO_CONVERGENCE_TOL = 1e-3
 ALLOW_EARLY_STOP = False
@@ -61,12 +70,9 @@ GP_ALPHA_FLOOR = 1e-12
 
 
 # All plots, Excel data, and text summaries are saved under this folder.
-PROJECT_DIR = Path(
-    r"C:\Users\jahna\OneDrive\Desktop\masters\master's thesis"
-    r"\Bayesian-OED\inverse_prob_julia"
-)
+PROJECT_DIR = Path(__file__).resolve().parent
 
-RESULTS_FOLDER_NAME = "bayes_design_ROM_asymptotic"
+RESULTS_FOLDER_NAME = "bayes_design_ROM_RBS"
 ADD_TIMESTAMP_TO_RESULTS_FOLDER = False
 
 folder_name = RESULTS_FOLDER_NAME
@@ -78,9 +84,11 @@ RESULTS_DIR = PROJECT_DIR / "results" / folder_name
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 SAVE_PLOTS = True
-SHOW_PLOTS = True
+SHOW_PLOTS = False
 PRINT_ESTIMATOR_SHAPES = True
 
+RUN_NOISES_IN_PARALLEL = True
+MAX_PARALLEL_NOISES = 3
 # ============================================================
 # OUTPUT HELPERS
 # ============================================================
@@ -452,8 +460,6 @@ def bayesian_optimization(
         np.asarray(param_exp_counts, dtype=int),
     )
 
-
-
 # ============================================================
 # SUMMARY, EXPORT, AND PLOTS
 # ============================================================
@@ -548,6 +554,8 @@ def run_single_noise_case(noise_level):
         "final_params": np.asarray(final_params, dtype=float),
     }
 
+def run_noise_worker(noise_level):
+    return run_single_noise_case(noise_level)
 
 def build_settings_dataframe(results_dir):
     settings = {
@@ -946,14 +954,36 @@ def plot_noise_sweep_results(all_results, results_dir=None):
 # ============================================================
 
 if __name__ == "__main__":
+    mp.freeze_support()
     all_results = []
     results_dir = RESULTS_DIR
     results_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\nSaving all outputs to: {results_dir}\n")
+    
+    if RUN_NOISES_IN_PARALLEL:
+        ctx = mp.get_context("spawn")
 
-    for noise_level in NOISE_LEVELS:
-        all_results.append(run_single_noise_case(noise_level))
+        with ProcessPoolExecutor(
+            max_workers=MAX_PARALLEL_NOISES,
+            mp_context=ctx,
+        ) as executor:
+            future_to_noise = {
+                executor.submit(run_noise_worker, noise): noise
+                for noise in NOISE_LEVELS
+            }
+
+            for future in as_completed(future_to_noise):
+                noise = future_to_noise[future]
+                print(f"\nCollecting finished noise case: {noise:.0e}")
+                all_results.append(future.result())
+
+        all_results.sort(key=lambda result: NOISE_LEVELS.index(result["noise"]))
+
+    else:
+
+        for noise_level in NOISE_LEVELS:
+            all_results.append(run_single_noise_case(noise_level))
 
     export_noise_sweep_outputs(all_results, results_dir)
     plot_noise_sweep_results(all_results, results_dir)
