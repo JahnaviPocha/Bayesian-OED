@@ -24,9 +24,15 @@ Expected Julia noisy-data tensor shape:
 Put this file and call_to_KPE_code_meoh_fio.py in inverse_prob_julia/.
 """
 
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing as mp
+
+
 from datetime import datetime
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
@@ -179,7 +185,7 @@ NREF_ESTIMATION = 2500
 # All plots, Excel data, and text summaries are saved under this folder.
 PROJECT_DIR = Path(__file__).resolve().parent
 
-RESULTS_FOLDER_NAME = "bayes_design_meoh_FIO_asymptotic"
+RESULTS_FOLDER_NAME = "bayes_design_meoh_FIO_RBS"
 ADD_TIMESTAMP_TO_RESULTS_FOLDER = False
 
 folder_name = RESULTS_FOLDER_NAME
@@ -191,9 +197,11 @@ RESULTS_DIR = PROJECT_DIR / "results" / folder_name
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 SAVE_PLOTS = True
-SHOW_PLOTS = True
+SHOW_PLOTS = False
 PRINT_ESTIMATOR_SHAPES = True
 
+RUN_NOISES_IN_PARALLEL = True
+MAX_PARALLEL_NOISES = 3
 
 # ============================================================
 # OUTPUT HELPERS
@@ -858,6 +866,50 @@ def run_noise_study():
 
     return results
 
+def run_noise_worker(noise):
+    initial_rng = np.random.default_rng(BASE_SEED)
+    shared_initial_design = generate_initial_design(N_INIT, rng=initial_rng)
+
+    print("\n")
+    print("=" * 60)
+    print(f"RUNNING METHANOL FIO CASE sigma = {noise:.0e}")
+    print("=" * 60)
+
+    result = BO(
+        noise_level=noise,
+        N_init=N_INIT,
+        max_experiments=MAX_EXPERIMENTS,
+        n_candidates=N_CANDIDATES,
+        allow_early_stop=ALLOW_EARLY_STOP_IN_SWEEP,
+        tol=CONVERGENCE_TOL,
+        rng_seed=BASE_SEED,
+        initial_design=shared_initial_design,
+    )
+
+    final_params = result["param_history"][-1]
+    rel_errors = relative_parameter_error(final_params)
+    rel_norm = np.linalg.norm(rel_errors) / np.sqrt(N_UNKNOWN_PARAMETERS)
+    best_idx = int(np.argmax(result["point_information"]))
+
+    print("\n===== FINAL RESULTS SUMMARY =====")
+    print(f"noise sigma = {noise:.0e}")
+    print("Total experiments used:", len(result["X"]))
+    print(f"RMS relative parameter error = {rel_norm:.6e}")
+    print("Final physical parameters:")
+
+    for i, value in enumerate(final_params):
+        print(
+            f"  p{i + 1}: {value:.6e} "
+            f"true={TRUE_PARAMS_PHYSICAL[i]:.6e} "
+            f"rel_error={rel_errors[i]:+.3e}"
+        )
+
+    print("Best pointwise-information experiment:")
+    print(result["X"][best_idx])
+    print(f"Point information = {result['point_information'][best_idx]:.6f}")
+    print(f"Final cumulative information = {result['total_info_history'][-1]:.6f}")
+
+    return noise, result
 
 
 # ============================================================
@@ -1460,12 +1512,41 @@ def plot_methanol_outputs(results):
     save_and_show(fig, RESULTS_DIR, "08_methanol_outputs.png")
 
 
+# ============================================================
+# Main
+# ============================================================
+
 if __name__ == "__main__":
+    mp.freeze_support()
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
     print(f"\nSaving all outputs to: {RESULTS_DIR}\n")
-    
-    results = run_noise_study()
+
+    if RUN_NOISES_IN_PARALLEL:
+        results = {}
+        ctx = mp.get_context("spawn")
+
+        with ProcessPoolExecutor(
+            max_workers=MAX_PARALLEL_NOISES,
+            mp_context=ctx,
+        ) as executor:
+            future_to_noise = {
+                executor.submit(run_noise_worker, noise): noise
+                for noise in NOISE_LEVELS
+            }
+
+            for future in as_completed(future_to_noise):
+                noise = future_to_noise[future]
+                print(f"\nCollecting finished noise case: {noise:.0e}")
+                finished_noise, result = future.result()
+                results[finished_noise] = result
+
+        results = {noise: results[noise] for noise in NOISE_LEVELS}
+    else:
+        results = run_noise_study()
+
     export_all_outputs(results)
-    
+
     plot_parameters_mixed_log(results)
     plot_relative_parameter_errors(results)
     plot_mixed_log_parameter_error(results)
@@ -1474,4 +1555,3 @@ if __name__ == "__main__":
     plot_information_gain(results)
     plot_best_point_information(results)
     plot_methanol_outputs(results)
-

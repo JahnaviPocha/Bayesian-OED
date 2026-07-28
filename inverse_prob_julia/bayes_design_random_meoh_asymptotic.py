@@ -17,15 +17,17 @@ Put this file in inverse_prob_julia/ next to call_to_KPE_code_meoh.py.
 """
 
 from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing as mp
 from pathlib import Path
 
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
-
-
 try:
     from call_to_KPE_code_meoh import rpg, experiments, parameter_estimator
 except ImportError:
@@ -55,7 +57,7 @@ PRESSURE_BOUNDS = (15.0, 50.0)
 RATIO = 0.1
 SCALE = 1.0
 N_REPEATS = 50
-NOISE_LEVELS = [1e-5, 1e-6]
+NOISE_LEVELS = [1e-5, 1e-6, 1e-7]
 
 N_EXPERIMENTS = 100
 MIN_ESTIMATION_EXPERIMENTS = 10
@@ -63,12 +65,10 @@ MIN_ESTIMATION_EXPERIMENTS = 10
 BASE_SEED = 12345
 RBS_FULL = False
 
-RESULTS_FOLDER_NAME = "bayes_design_random_meoh_asymptotic"
-ADD_TIMESTAMP_TO_RESULTS_FOLDER = False
-SAVE_PLOTS = True
-SHOW_PLOTS = True
-
 PROJECT_DIR = Path(__file__).resolve().parent
+
+RESULTS_FOLDER_NAME = "bayes_design_random_meoh_RBS"
+ADD_TIMESTAMP_TO_RESULTS_FOLDER = False
 
 folder_name = RESULTS_FOLDER_NAME
 if ADD_TIMESTAMP_TO_RESULTS_FOLDER:
@@ -77,6 +77,12 @@ if ADD_TIMESTAMP_TO_RESULTS_FOLDER:
 
 RESULTS_DIR = PROJECT_DIR / "results" / folder_name
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+SAVE_PLOTS = True
+SHOW_PLOTS = False
+
+RUN_NOISES_IN_PARALLEL = True
+MAX_PARALLEL_NOISES = min(3, len(NOISE_LEVELS))
 
 ST = np.array(
     [
@@ -348,8 +354,6 @@ def style_for_noise(noise):
         "linestyle": linestyles.get(noise, "-"),
     }
 
-
-
 def finish_plot(filename):
     fig = plt.gcf()
 
@@ -470,7 +474,6 @@ def export_all_outputs(results, X_design):
 
 
 
-
 def plot_design(X):
     fig = plt.figure(figsize=(9, 6))
     ax = fig.add_subplot(111, projection="3d")
@@ -482,7 +485,7 @@ def plot_design(X):
     ax.set_title("Methanol Random Experimental Design")
     plt.tight_layout()
     finish_plot("01_random_design_3d.png")
-    plt.show()
+    
 
 
 def plot_outputs(results):
@@ -506,7 +509,7 @@ def plot_outputs(results):
     plt.legend()
     plt.tight_layout()
     finish_plot("02_ch3oh_output.png")
-    plt.show()
+    
 
 
 def plot_parameter_physical(results):
@@ -535,7 +538,7 @@ def plot_parameter_physical(results):
         plt.legend()
         plt.tight_layout()
         finish_plot(f"03_p{j + 1:02d}_physical_convergence.png")
-        plt.show()
+        
 
 
 def plot_parameter_normalized(results):
@@ -570,7 +573,7 @@ def plot_parameter_normalized(results):
         plt.legend()
         plt.tight_layout()
         finish_plot(f"04_p{j + 1:02d}_normalized_convergence.png")
-        plt.show()
+        
 
 
 def plot_error(results):
@@ -599,7 +602,7 @@ def plot_error(results):
     plt.legend()
     plt.tight_layout()
     finish_plot("05_rms_normalized_parameter_error.png")
-    plt.show()
+    
 
 
 def print_summary(results):
@@ -615,26 +618,52 @@ def print_summary(results):
         )
 
 
+def random_design_worker(noise, X_design):
+    result = random_design_study(noise, X_design)
+    return noise, result
+
 
 if __name__ == "__main__":
-    print(f"\nSaving all outputs to: {RESULTS_DIR}\n")
+    mp.freeze_support()
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
+    print(f"\nSaving all outputs to: {RESULTS_DIR}\n")
+    
     rng = np.random.default_rng(BASE_SEED)
     X_design = generate_random_design(N_EXPERIMENTS, rng)
 
-    all_results = [
-        random_design_study(noise, X_design)
-        for noise in NOISE_LEVELS
-    ]
+    if RUN_NOISES_IN_PARALLEL:
+        results_by_noise = {}
+        ctx = mp.get_context("spawn")
+
+        with ProcessPoolExecutor(
+            max_workers=MAX_PARALLEL_NOISES,
+            mp_context=ctx,
+        ) as executor:
+            future_to_noise = {
+                executor.submit(random_design_worker, noise, X_design): noise
+                for noise in NOISE_LEVELS
+            }
+
+            for future in as_completed(future_to_noise):
+                noise = future_to_noise[future]
+                print(f"\nCollecting finished random MeOH noise case: {noise:.0e}")
+                finished_noise, result = future.result()
+                results_by_noise[finished_noise] = result
+
+        all_results = [results_by_noise[noise] for noise in NOISE_LEVELS]
+    else:
+        all_results = [
+            random_design_study(noise, X_design)
+            for noise in NOISE_LEVELS
+        ]
 
     print_summary(all_results)
     export_all_outputs(all_results, X_design)
-
+    
     plot_design(X_design)
     plot_outputs(all_results)
     plot_parameter_physical(all_results)
     plot_parameter_normalized(all_results)
     plot_error(all_results)
-    
-    
     
