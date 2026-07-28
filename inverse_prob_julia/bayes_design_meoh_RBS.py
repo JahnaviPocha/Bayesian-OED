@@ -144,7 +144,7 @@ RBS_FULL = True
 # All plots, Excel data, and text summaries are saved under this folder.
 PROJECT_DIR = Path(__file__).resolve().parent
 
-RESULTS_FOLDER_NAME = "bayes_design_meoh_asymptotic"
+RESULTS_FOLDER_NAME = "bayes_design_meoh_RBS"
 ADD_TIMESTAMP_TO_RESULTS_FOLDER = False
 
 folder_name = RESULTS_FOLDER_NAME

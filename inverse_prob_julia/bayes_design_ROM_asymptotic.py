@@ -72,7 +72,7 @@ GP_ALPHA_FLOOR = 1e-12
 # All plots, Excel data, and text summaries are saved under this folder.
 PROJECT_DIR = Path(__file__).resolve().parent
 
-RESULTS_FOLDER_NAME = "bayes_design_ROM_RBS"
+RESULTS_FOLDER_NAME = "bayes_design_ROM_asymptotic"
 ADD_TIMESTAMP_TO_RESULTS_FOLDER = False
 
 folder_name = RESULTS_FOLDER_NAME

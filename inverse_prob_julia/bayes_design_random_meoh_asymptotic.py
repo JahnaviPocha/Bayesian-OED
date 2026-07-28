@@ -67,7 +67,7 @@ RBS_FULL = False
 
 PROJECT_DIR = Path(__file__).resolve().parent
 
-RESULTS_FOLDER_NAME = "bayes_design_random_meoh_RBS"
+RESULTS_FOLDER_NAME = "bayes_design_random_meoh_asymptotic"
 ADD_TIMESTAMP_TO_RESULTS_FOLDER = False
 
 folder_name = RESULTS_FOLDER_NAME
