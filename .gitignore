@@ -2,3 +2,15 @@
 #*
 
 *.csv
+
+# Julia depot (project-local, ~2.6 GB of downloaded packages)
+inverse_prob_julia/.julia_depot/
+# Python venv
+inverse_prob_julia/.venv/
+# Byte-compiled files
+__pycache__/
+*.pyc
+# SLURM job output logs
+inverse_prob_julia/slurm_logs/
+# Generated results
+inverse_prob_julia/results/

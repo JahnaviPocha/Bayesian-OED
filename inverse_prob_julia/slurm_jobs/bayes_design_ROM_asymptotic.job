@@ -1,0 +1,42 @@
+#!/bin/bash --login
+#SBATCH --job-name=bayes_design_ROM_asymptotic
+#SBATCH --chdir=/net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia
+#SBATCH --output=slurm_logs/bayes_design_ROM_asymptotic_%j.out
+#SBATCH --time=8640
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=12
+#SBATCH --mem=120G
+#SBATCH --mail-type=begin,end,fail
+#SBATCH --mail-user=m.qureshi.1@campus.tu-berlin.de
+
+# --- Julia / juliacall environment (project-local, no home depot, no network) ---
+export JULIA_DEPOT_PATH="/net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia/.julia_depot"
+export PYTHON_JULIAPKG_EXE="/net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia/.venv/julia_env/pyjuliapkg/install/bin/julia"
+export PYTHON_JULIAPKG_OFFLINE=yes
+# All packages are precompiled; disable auto-precompile so 33 concurrent
+# Julia processes do not contend on depot pidfile locks (caused a hang before).
+export JULIA_PKG_PRECOMPILE_AUTO=0
+
+# Julia 1.11.9 ships a newer libstdc++ than the compute nodes provide
+JULIA_INSTALL="/net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia/.venv/julia_env/pyjuliapkg/install"
+export LD_LIBRARY_PATH="$JULIA_INSTALL/lib/julia:$JULIA_INSTALL/lib:$LD_LIBRARY_PATH"
+
+# --- Thread control -----------------------------------------------------------
+# The script runs 3 noise levels in parallel (ProcessPoolExecutor, spawn).
+# Each worker starts its own Julia runtime, so cap threads per worker at
+# 4 => 3 x 4 = 12 = --cpus-per-task.
+# Without these caps each Julia grabs every visible core and they thrash.
+# Julia code uses Threads.@threads in src/optimizer.jl, so threads matter.
+# juliacall requires this to avoid segfaults when Julia is multithreaded.
+export PYTHON_JULIACALL_HANDLE_SIGNALS=yes
+export JULIA_NUM_THREADS=4
+export OPENBLAS_NUM_THREADS=4
+export OMP_NUM_THREADS=4
+export MKL_NUM_THREADS=4
+
+# --- Output -------------------------------------------------------------------
+export PYTHONUNBUFFERED=1     # otherwise Python print() never reaches the log
+export MPLBACKEND=Agg
+
+"/net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia/.venv/bin/python" "/net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia/bayes_design_ROM_asymptotic.py"
