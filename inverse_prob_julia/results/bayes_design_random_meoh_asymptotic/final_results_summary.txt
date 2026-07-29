@@ -1,0 +1,67 @@
+===== METHANOL RANDOM DESIGN SUMMARY =====
+
+============================================================
+===== FINAL RESULTS SUMMARY =====
+
+Noise level: 1e-05
+Total experiments used: 100
+
+Final estimated parameters:
+  p1: 1.000025e-01 true=1.567202e+04 rel_error=-1.000e+00
+  p2: 8.480421e+03 true=3.453380e+03 rel_error=+1.456e+00
+  p3: 6.487576e-01 true=3.083600e+01 rel_error=-9.790e-01
+  p4: 1.368028e-01 true=5.585320e+02 rel_error=-9.998e-01
+  p5: 9.588805e+02 true=7.439000e-01 rel_error=+1.288e+03
+  p6: 9.802079e+04 true=4.000000e+04 rel_error=+1.451e+00
+  p7: 2.540099e+04 true=1.719700e+04 rel_error=+4.771e-01
+  p8: 5.201499e+04 true=1.241190e+05 rel_error=-5.809e-01
+  p9: 3.730434e+04 true=9.808400e+04 rel_error=-6.197e-01
+
+Best experiment by CH3OH outlet:
+  X = [2.34118750e-01 2.24824074e-01 3.33000000e-03 9.64183673e-03
+ 2.27119835e-01 4.67659763e+02 2.98289792e+01]
+  CH3OH = 1.579281e-02
+
+============================================================
+===== FINAL RESULTS SUMMARY =====
+
+Noise level: 1e-06
+Total experiments used: 100
+
+Final estimated parameters:
+  p1: 1.938600e+00 true=1.567202e+04 rel_error=-9.999e-01
+  p2: 3.227246e+03 true=3.453380e+03 rel_error=-6.548e-02
+  p3: 1.764510e+00 true=3.083600e+01 rel_error=-9.428e-01
+  p4: 6.032907e-01 true=5.585320e+02 rel_error=-9.989e-01
+  p5: 3.130918e+02 true=7.439000e-01 rel_error=+4.199e+02
+  p6: 7.947279e+04 true=4.000000e+04 rel_error=+9.868e-01
+  p7: 1.745359e+04 true=1.719700e+04 rel_error=+1.492e-02
+  p8: 3.068243e+04 true=1.241190e+05 rel_error=-7.528e-01
+  p9: 2.723327e+04 true=9.808400e+04 rel_error=-7.223e-01
+
+Best experiment by CH3OH outlet:
+  X = [2.34118750e-01 2.24824074e-01 3.33000000e-03 9.64183673e-03
+ 2.27119835e-01 4.67659763e+02 2.98289792e+01]
+  CH3OH = 1.579337e-02
+
+============================================================
+===== FINAL RESULTS SUMMARY =====
+
+Noise level: 1e-07
+Total experiments used: 100
+
+Final estimated parameters:
+  p1: 1.007444e-01 true=1.567202e+04 rel_error=-1.000e+00
+  p2: 9.870716e+03 true=3.453380e+03 rel_error=+1.858e+00
+  p3: 1.459277e-01 true=3.083600e+01 rel_error=-9.953e-01
+  p4: 1.168217e+01 true=5.585320e+02 rel_error=-9.791e-01
+  p5: 2.821120e+03 true=7.439000e-01 rel_error=+3.791e+03
+  p6: 2.211483e+04 true=4.000000e+04 rel_error=-4.471e-01
+  p7: 7.522876e+04 true=1.719700e+04 rel_error=+3.375e+00
+  p8: 2.576436e+04 true=1.241190e+05 rel_error=-7.924e-01
+  p9: 3.252313e+04 true=9.808400e+04 rel_error=-6.684e-01
+
+Best experiment by CH3OH outlet:
+  X = [2.34118750e-01 2.24824074e-01 3.33000000e-03 9.64183673e-03
+ 2.27119835e-01 4.67659763e+02 2.98289792e+01]
+  CH3OH = 1.579341e-02

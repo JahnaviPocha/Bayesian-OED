@@ -1,0 +1,51 @@
+ROM/RBS MASS-KINETICS BOED NOISE SWEEP SUMMARY
+
+Results folder: /net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia/results/bayes_design_ROM_RBS
+Noise levels: 1e-03, 1e-04, 1e-05
+RBS_FULL: True
+N_INIT: 3
+MAX_EXPERIMENTS: 15
+N_CANDIDATES: 200
+N_REPEATS: 10
+
+============================================================
+===== FINAL RESULTS SUMMARY =====
+
+Noise level: 1e-03
+Total experiments used: 15
+
+Final estimated parameters:
+  k1 = 4042.026440 true=4000.000000 error=+4.202644e+01 rel_error=+1.051e-02
+  k2 = 4097.745730 true=4000.000000 error=+9.774573e+01 rel_error=+2.444e-02
+
+Best experiment by target output:
+  X = [1.10118438e-01 1.00176053e-01 4.80451447e+02]
+  target output = 0.791173
+
+============================================================
+===== FINAL RESULTS SUMMARY =====
+
+Noise level: 1e-04
+Total experiments used: 15
+
+Final estimated parameters:
+  k1 = 4102.154682 true=4000.000000 error=+1.021547e+02 rel_error=+2.554e-02
+  k2 = 4084.938782 true=4000.000000 error=+8.493878e+01 rel_error=+2.123e-02
+
+Best experiment by target output:
+  X = [1.10118438e-01 1.00176053e-01 4.80451447e+02]
+  target output = 0.791253
+
+============================================================
+===== FINAL RESULTS SUMMARY =====
+
+Noise level: 1e-05
+Total experiments used: 15
+
+Final estimated parameters:
+  k1 = 4010.373586 true=4000.000000 error=+1.037359e+01 rel_error=+2.593e-03
+  k2 = 4007.159164 true=4000.000000 error=+7.159164e+00 rel_error=+1.790e-03
+
+Best experiment by target output:
+  X = [1.10118438e-01 1.00176053e-01 4.80451447e+02]
+  target output = 0.791251

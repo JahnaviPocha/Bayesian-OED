@@ -1,0 +1,20 @@
+METHANOL BOED NOISE SWEEP SUMMARY
+
+Results folder: /net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia/results/bayes_design_meoh_asymptotic
+Noise levels: 1e-05, 1e-06, 1e-07
+N_INIT: 10
+MAX_EXPERIMENTS: 100
+N_CANDIDATES: 200
+N_REPEATS: 10
+RBS_FULL: False
+
+Estimator input check:
+  experiments() receives each selected design as Y_in=(6, 1), Temp=(1,), P_total=(1,).
+  parameter_estimator() receives accumulated physical design arrays: Y_in=(6, Nexps), Temp=(Nexps,), P_total=(Nexps,), Y_out=(N_repeats, 6, Nexps).
+  X_scaled is used only by the Python GP/EI surrogate and is not sent to Julia.
+
+noise      n_exp    methanol_best    rms_relative_parameter_error
+----------------------------------------------------------------
+1e-05     100        0.016504                      1.007e+00
+1e-06     100        0.016507                      1.007e+00
+1e-07     100        0.016507                      1.007e+00

@@ -1,0 +1,72 @@
+===== ROM/RBS FIO NOISE SWEEP SUMMARY =====
+
+Results folder: /net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia/results/bayes_design_ROM_FIO_asymptotic
+Noise levels: 1e-03, 1e-04, 1e-05
+N_INIT: 3
+MAX_EXPERIMENTS: 15
+N_CANDIDATES: 200
+N_REPEATS: 10
+RBS_FULL: False
+
+============================================================
+===== FINAL RESULTS SUMMARY =====
+
+noise sigma = 1e-03
+Total experiments used: 15
+RMS relative parameter error = 3.628381e-01
+
+Final estimated parameters:
+  k1 = 2304.271265 true=4000.000000 rel_error=-4.239e-01
+  k2 = 2843.561211 true=4000.000000 rel_error=-2.891e-01
+
+Best pointwise-information experiment:
+  X = [4.80207431e-01 2.46949907e-01 3.09293758e+02]
+  Point information = 3.665363
+
+Best target-output experiment:
+  X = [1.04235768e-01 2.14139751e-01 3.68003664e+02]
+  Target output = 0.683719
+
+Final cumulative information = 6.940294
+
+============================================================
+===== FINAL RESULTS SUMMARY =====
+
+noise sigma = 1e-04
+Total experiments used: 15
+RMS relative parameter error = 2.569721e-01
+
+Final estimated parameters:
+  k1 = 2687.023996 true=4000.000000 rel_error=-3.282e-01
+  k2 = 3376.138243 true=4000.000000 rel_error=-1.560e-01
+
+Best pointwise-information experiment:
+  X = [4.80207431e-01 2.46949907e-01 3.09293758e+02]
+  Point information = 5.967624
+
+Best target-output experiment:
+  X = [1.04235768e-01 2.14139751e-01 3.68003664e+02]
+  Target output = 0.683391
+
+Final cumulative information = 11.540973
+
+============================================================
+===== FINAL RESULTS SUMMARY =====
+
+noise sigma = 1e-05
+Total experiments used: 15
+RMS relative parameter error = 2.323931e-01
+
+Final estimated parameters:
+  k1 = 2792.390930 true=4000.000000 rel_error=-3.019e-01
+  k2 = 3480.490270 true=4000.000000 rel_error=-1.299e-01
+
+Best pointwise-information experiment:
+  X = [4.80207431e-01 2.46949907e-01 3.09293758e+02]
+  Point information = 8.270206
+
+Best target-output experiment:
+  X = [1.04235768e-01 2.14139751e-01 3.68003664e+02]
+  Target output = 0.683403
+
+Final cumulative information = 16.146098
