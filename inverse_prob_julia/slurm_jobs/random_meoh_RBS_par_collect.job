@@ -6,7 +6,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
+#SBATCH --mem=96G   # bigmem QOS floor is 80G, not a real need
 #SBATCH --partition=bigmem
 #SBATCH --mail-type=end,fail
 #SBATCH --mail-user=m.qureshi.1@campus.tu-berlin.de

@@ -5,8 +5,8 @@
 #SBATCH --time=12:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
-#SBATCH --mem=96G
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=96G   # bigmem QOS enforces MinTRES mem=80G
 #SBATCH --partition=bigmem
 #SBATCH --mail-type=end,fail
 #SBATCH --mail-user=m.qureshi.1@campus.tu-berlin.de
@@ -24,7 +24,7 @@ JULIA_INSTALL="/net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia/.venv/ju
 export LD_LIBRARY_PATH="$JULIA_INSTALL/lib/julia:$JULIA_INSTALL/lib:$LD_LIBRARY_PATH"
 
 # experiments() runs one design at a time, so there is no Nexps loop for Julia
-# to thread over. Two threads per worker, 16 workers across the 32 cores.
+# to thread over. Two threads per worker, 4 workers across the 8 cores.
 export PYTHON_JULIACALL_HANDLE_SIGNALS=yes
 export JULIA_NUM_THREADS=2
 export OPENBLAS_NUM_THREADS=2
