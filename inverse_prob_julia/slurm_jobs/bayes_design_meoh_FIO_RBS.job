@@ -2,11 +2,12 @@
 #SBATCH --job-name=bayes_design_meoh_FIO_RBS
 #SBATCH --chdir=/net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia
 #SBATCH --output=slurm_logs/bayes_design_meoh_FIO_RBS_%j.out
-#SBATCH --time=8640
+#SBATCH --time=8-08:00:00   # bigmem partition maximum
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=12
 #SBATCH --mem=120G
+#SBATCH --partition=bigmem
 #SBATCH --mail-type=begin,end,fail
 #SBATCH --mail-user=m.qureshi.1@campus.tu-berlin.de
 

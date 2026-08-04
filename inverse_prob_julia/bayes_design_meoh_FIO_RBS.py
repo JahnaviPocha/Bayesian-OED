@@ -167,7 +167,8 @@ NREF_ESTIMATION = 2500
 PROJECT_DIR = Path(__file__).resolve().parent
 
 RESULTS_FOLDER_NAME = "bayes_design_meoh_FIO_RBS"
-ADD_TIMESTAMP_TO_RESULTS_FOLDER = False
+# Timestamped so a rerun cannot overwrite results already on disk.
+ADD_TIMESTAMP_TO_RESULTS_FOLDER = True
 
 folder_name = RESULTS_FOLDER_NAME
 if ADD_TIMESTAMP_TO_RESULTS_FOLDER:
@@ -176,6 +177,12 @@ if ADD_TIMESTAMP_TO_RESULTS_FOLDER:
 
 RESULTS_DIR = PROJECT_DIR / "results" / folder_name
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+# State is written here after every BO iteration rather than only at the end,
+# so a run that is killed or still going can still be inspected. Read it with
+# tools/snapshot_progress.py.
+PROGRESS_DIR = RESULTS_DIR / "progress"
+PROGRESS_DIR.mkdir(parents=True, exist_ok=True)
 
 SAVE_PLOTS = True
 SHOW_PLOTS = False
@@ -643,6 +650,40 @@ def check_parameter_convergence(param_history, tol=1e-3):
     return delta < tol
 
 
+def save_progress(noise_level, X, y_info, y_methanol, Y_full, F_matrices,
+                  param_history, param_exp_counts, total_info_history):
+    """
+    Write this noise level's state after every BO iteration.
+
+    Everything else here is written only once the loop finishes, so a run that
+    hits the wall clock leaves nothing behind. The three noise levels run as
+    separate processes and each owns one file, so no locking is needed.
+
+    Written to a temporary name and renamed, because a reader may look at the
+    file at any moment and rename is atomic; a plain write would expose a
+    half-written array.
+
+    The chosen designs are stored here too. They are never printed, so before
+    this the log could not tell you which experiments the FIO criterion picked.
+    """
+    path = PROGRESS_DIR / f"noise_{noise_level:.0e}.npz".replace("-", "m")
+    tmp = path.with_name(path.name + ".tmp")
+
+    np.savez_compressed(
+        tmp,
+        noise=noise_level,
+        X=np.asarray(X, dtype=float),
+        y=np.asarray(y_methanol, dtype=float),
+        point_information=np.asarray(y_info, dtype=float),
+        Y_full=np.asarray(Y_full, dtype=float),
+        F_matrices=np.asarray(F_matrices, dtype=float),
+        params=np.asarray(param_history, dtype=float),
+        param_exp_counts=np.asarray(param_exp_counts, dtype=int),
+        total_info_history=np.asarray(total_info_history, dtype=float),
+    )
+    tmp.replace(path)
+
+
 def BO(
     noise_level,
     N_init=N_INIT,
@@ -776,6 +817,10 @@ def BO(
         print(f"Evaluated {len(X_batch)} candidates this iteration")
         print(f"Cumulative information = {total_info_history[-1]:.6f}")
         print("Estimated physical parameters =", params_physical)
+
+        save_progress(noise_level, X, y_info, y_methanol, Y_full, F_matrices,
+                      param_history, param_exp_counts, total_info_history)
+        print(f"Progress saved at {len(X)} experiments.")
 
         if allow_early_stop and check_parameter_convergence(param_history, tol):
             print("\nConvergence reached -> stopping early.")
