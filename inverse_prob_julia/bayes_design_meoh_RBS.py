@@ -5,8 +5,10 @@ Created on Wed Jul 22 12:41:25 2026
 @author: jahna
 """
 
+import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing as mp
+import os
 
 
 from datetime import datetime
@@ -145,13 +147,31 @@ RBS_FULL = True
 PROJECT_DIR = Path(__file__).resolve().parent
 
 RESULTS_FOLDER_NAME = "bayes_design_meoh_RBS"
-# Timestamped so a rerun cannot overwrite results already on disk.
+# Suffixed so a rerun cannot overwrite results already on disk.
 ADD_TIMESTAMP_TO_RESULTS_FOLDER = True
+
+
+def run_tag():
+    """
+    A suffix that every process of one run agrees on.
+
+    A timestamp cannot be used directly: the noise levels are spawned, so each
+    worker re-imports this module and would stamp its own folder, scattering
+    one run across several. The SLURM id is identical in parent and children.
+    SLURM_ARRAY_JOB_ID is preferred so that array tasks splitting the noise
+    levels share a single folder; the timestamp is only a fallback for runs
+    started outside SLURM.
+    """
+    return (
+        os.environ.get("SLURM_ARRAY_JOB_ID")
+        or os.environ.get("SLURM_JOB_ID")
+        or datetime.now().strftime("%Y%m%d_%H%M%S")
+    )
+
 
 folder_name = RESULTS_FOLDER_NAME
 if ADD_TIMESTAMP_TO_RESULTS_FOLDER:
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    folder_name = f"{RESULTS_FOLDER_NAME}_{stamp}"
+    folder_name = f"{RESULTS_FOLDER_NAME}_{run_tag()}"
 
 RESULTS_DIR = PROJECT_DIR / "results" / folder_name
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1366,13 +1386,35 @@ def run_noise_worker(noise_level):
 if __name__ == "__main__":
     mp.freeze_support()
 
+    parser = argparse.ArgumentParser(description="Methanol RBS Bayesian OED")
+    parser.add_argument(
+        "--noise",
+        type=float,
+        default=None,
+        help="run only this noise level, for one SLURM job per noise level. "
+             "Each fit then gets the whole allocation's threads instead of a "
+             "third of it, and the Julia estimator threads over Nexps.",
+    )
+    args = parser.parse_args()
+
+    noise_levels = NOISE_LEVELS if args.noise is None else [args.noise]
+
+    # One job per noise level shares the run folder through SLURM_ARRAY_JOB_ID
+    # but must not share output filenames, so each writes its own subfolder.
+    # The progress files stay in the common PROGRESS_DIR, one per noise level,
+    # which is what tools/snapshot_progress.py reads to compare them.
+    if args.noise is not None:
+        RESULTS_DIR = RESULTS_DIR / f"noise_{args.noise:.0e}".replace("-", "m")
+
     all_results = []
     results_dir = RESULTS_DIR
     results_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\nSaving all outputs to: {results_dir}\n")
-    
-    if RUN_NOISES_IN_PARALLEL:
+    if args.noise is not None:
+        print(f"Single noise level: {args.noise:.0e}\n")
+
+    if RUN_NOISES_IN_PARALLEL and len(noise_levels) > 1:
         ctx = mp.get_context("spawn")
 
         with ProcessPoolExecutor(
@@ -1381,7 +1423,7 @@ if __name__ == "__main__":
         ) as executor:
             future_to_noise = {
                 executor.submit(run_noise_worker, noise): noise
-                for noise in NOISE_LEVELS
+                for noise in noise_levels
             }
 
             for future in as_completed(future_to_noise):
@@ -1392,7 +1434,7 @@ if __name__ == "__main__":
         all_results.sort(key=lambda result: NOISE_LEVELS.index(result["noise"]))
 
     else:
-        for noise_level in NOISE_LEVELS:
+        for noise_level in noise_levels:
             all_results.append(run_single_noise_case(noise_level))
 
     print_noise_sweep_table(all_results)
