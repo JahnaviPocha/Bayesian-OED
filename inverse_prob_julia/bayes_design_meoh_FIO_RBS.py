@@ -686,7 +686,10 @@ def save_progress(noise_level, X, y_info, y_methanol, Y_full, F_matrices,
     this the log could not tell you which experiments the FIO criterion picked.
     """
     path = PROGRESS_DIR / f"noise_{noise_level:.0e}.npz".replace("-", "m")
-    tmp = path.with_name(path.name + ".tmp")
+    # The temporary name has to end in .npz too: savez_compressed appends .npz
+    # to anything that does not, so a "<name>.npz.tmp" target would silently be
+    # written as "<name>.npz.tmp.npz" and the rename below would not find it.
+    tmp = path.with_name(path.stem + ".tmp.npz")
 
     np.savez_compressed(
         tmp,
