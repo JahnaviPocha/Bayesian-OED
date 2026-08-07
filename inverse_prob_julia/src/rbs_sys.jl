@@ -30,7 +30,12 @@ function RBS_Snapshots(main; vel, nref=2500, ratio=0.01, Nexps=3, nspec=3, St=0.
     Bas_Out = Basis(Array{Float64}, length(sub_out), nspec, nreac, length(sub_cat))
 
 
-    for (i, v) in enumerate(sub_cat)
+    # The offline step, and the dominant cost of an estimation: one independent
+    # CFD solve per catalyst cell. Each iteration writes only into its own
+    # block, and main() builds its grid and system from its arguments with no
+    # shared mutable state, so the loop parallelises as it stands.
+    Threads.@threads for i in eachindex(sub_cat)
+        v = sub_cat[i]
         snapshot = main(nref=nref, vel=vel, RBS=true, ratio=ratio, St=St, RBS_full=true, catcell=v, P_total=P_total, inlet_MFs=inlet_MFs, T=T)
         for j in 1:nspec
             Bas_Cat.blocks[1, i][j, :] = 0 .+ view(snapshot[1][j, :], snapshot[2])

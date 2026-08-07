@@ -1,0 +1,47 @@
+#!/bin/bash --login
+#SBATCH --job-name=meoh_asym_final
+#SBATCH --chdir=/net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia
+#SBATCH --output=slurm_logs/meoh_asym_final_%j.out
+#SBATCH --time=8-08:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=20
+#SBATCH --mem=120G
+#SBATCH --partition=bigmem
+#SBATCH --mail-type=end,fail
+#SBATCH --mail-user=m.qureshi.1@campus.tu-berlin.de
+
+# The collaborator's bayes_design_meoh_asymptotic_final.py, with progress written after every
+# BO iteration so results can be read while the run is going.
+#
+# The script itself runs the 3 noise levels as 3 spawned workers. The offline
+# RBS step is now threaded over catalyst cells inside RBS_Snapshots and is the
+# dominant cost, so the cores go to those threads: 3 workers x 6 threads = 18
+# of the 20 requested, leaving headroom for the parent and the GC.
+#
+# BLAS is pinned to one thread. The parallelism that matters is the CFD solves,
+# and letting each Julia thread open its own BLAS pool would oversubscribe.
+#
+# Julia's GC has stop-the-world phases and the assembly loop allocates heavily,
+# so the collector gets its own threads rather than contending with the solves.
+
+export JULIA_DEPOT_PATH="/net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia/.julia_depot"
+export PYTHON_JULIAPKG_EXE="/net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia/.venv/julia_env/pyjuliapkg/install/bin/julia"
+export PYTHON_JULIAPKG_OFFLINE=yes
+export JULIA_PKG_PRECOMPILE_AUTO=0
+
+JULIA_INSTALL="/net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia/.venv/julia_env/pyjuliapkg/install"
+export LD_LIBRARY_PATH="$JULIA_INSTALL/lib/julia:$JULIA_INSTALL/lib:$LD_LIBRARY_PATH"
+
+export PYTHON_JULIACALL_HANDLE_SIGNALS=yes
+export JULIA_NUM_THREADS=6
+export JULIA_NUM_GC_THREADS=3
+export OPENBLAS_NUM_THREADS=1
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+
+export PYTHONUNBUFFERED=1
+export MPLBACKEND=Agg
+
+"/net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia/.venv/bin/python" \
+    "/net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia/bayes_design_meoh_asymptotic_final.py"

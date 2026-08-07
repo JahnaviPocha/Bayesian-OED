@@ -334,11 +334,73 @@ function experiments(; scale, Y_in, Temp, P_total, Nexps, ratio, N_repeats, std_
     return Yexp_with_Error
 end
 
+# ============================================================
+# OFFLINE STEP CACHE
+# ============================================================
+#
+# The offline step depends only on the design point. Inverse_Problem_Paras and
+# RBS_Snapshots both take the inlet composition, temperature, pressure and mesh
+# settings, and neither takes the kinetic parameters or the measurements. The
+# basis they build is therefore the same every time a given design point is
+# seen.
+#
+# In a Bayesian OED loop the same design points are re-visited constantly:
+# every iteration re-estimates on the whole history, so reaching n experiments
+# recomputed the offline step for all of 1..n at each step, which is O(n^2)
+# work for O(n) distinct design points. Caching makes it O(n), and adding a
+# batch of 4 experiments costs 4 offline solves rather than n.
+#
+# Keyed by value: Julia hashes arrays by content, so the inlet composition and
+# stoichiometry participate directly. Floats are rounded first so that a design
+# point surviving a round trip through Python still hits.
+#
+# The entries hold the reduced bases and are not small. One process handles one
+# noise level, so the cache holds at most one entry per distinct design point.
+
+const OFFLINE_CACHE = Dict{Any,Any}()
+const OFFLINE_CACHE_LOCK = ReentrantLock()
+
+function offline_cache_clear!()
+    lock(OFFLINE_CACHE_LOCK) do
+        empty!(OFFLINE_CACHE)
+    end
+    return nothing
+end
+
+function offline_step(; nref, ratio, nspec, inlet_MFs, T, P_total, St, nreac, RBS_full)
+    key = (
+        round.(Float64.(vec(inlet_MFs)), digits=12),
+        round(Float64(T), digits=12),
+        round(Float64(P_total), digits=12),
+        nref, ratio, nspec, nreac, RBS_full,
+        round.(Float64.(St), digits=12),
+    )
+
+    hit = lock(OFFLINE_CACHE_LOCK) do
+        get(OFFLINE_CACHE, key, nothing)
+    end
+    hit === nothing || return hit
+
+    # Computed outside the lock: this is minutes of CFD, and holding the lock
+    # would serialise any other caller waiting on a different design point.
+    A, B = Inverse_Problem_Paras(; nref=nref, ratio=ratio, nspec=nspec,
+                                 inlet_MFs=inlet_MFs, T=T, P_total=P_total, St=St)
+    B_RBS = RBS_full ?
+        RBS_Snapshots(main; nref=nref, vel=0.15, ratio=ratio, St=St, Nexps=1,
+                      nspec=nspec, nreac=nreac, inlet_MFs=inlet_MFs, T=T,
+                      P_total=P_total) :
+        0.0
+
+    value = (A, B, B_RBS)
+    lock(OFFLINE_CACHE_LOCK) do
+        OFFLINE_CACHE[key] = value
+    end
+    return value
+end
+
+
 function parameter_estimator(; scale, ratio, nspec, Y_in, Temp, P_total, St, nref=2500, nreac, Nexps, Y_out, unknown_parameters, IG, N_repeats, σ_data, RBS_full=false)
     
-    single_snapshot_A = []
-    single_snapshot_B = []
-    rbs_snapshot = []
     srbs_time = 0.0
     rbs_time = 0.0
     mixture_density = zeros(Nexps)
@@ -348,21 +410,29 @@ function parameter_estimator(; scale, ratio, nspec, Y_in, Temp, P_total, St, nre
     @info "Evaluating Kinetic Parameters"
     molar_weights = [44.01, 2.016, 18.01528, 32.04, 28.01, 28.0134]
     B_RBS = 0.0
+    # Preallocated and written by index rather than push!ed, so the order does
+    # not depend on completion order and the loop stays safe to parallelise.
+    single_snapshot_A = Vector{Any}(undef, Nexps)
+    single_snapshot_B = Vector{Any}(undef, Nexps)
+    rbs_snapshot = Vector{Any}(undef, Nexps)
+
+    cached_before = length(OFFLINE_CACHE)
+    @info "Offline step for $Nexps experiments (cache holds $cached_before design points)"
+
     for j in 1:Nexps
-        A, B = Inverse_Problem_Paras(; nref=nref, ratio=ratio, nspec=nspec, inlet_MFs=Y_in[:, j], T=Temp[j], P_total=P_total[j],St=St)
+        A, B, B_RBS_j = offline_step(; nref=nref, ratio=ratio, nspec=nspec,
+                                     inlet_MFs=Y_in[:, j], T=Temp[j],
+                                     P_total=P_total[j], St=St, nreac=nreac,
+                                     RBS_full=RBS_full)
         mixture_density[j] = density_rechner(molar_weights, Y_in[:, j], P_total[j], Temp[j])
         mixture_mw[j] = average_molar_weight(Y_in[:, j], molar_weights)
-        push!(single_snapshot_A, A)
-        push!(single_snapshot_B, B)
-        # #srbs_time += srbs.time
-        if RBS_full == true
-            @info "Conducting Offline Step for Full Reduced Basis"
-            B_RBS = RBS_Snapshots(main; nref=nref, vel=0.15, ratio=ratio, St=St, Nexps=Nexps, nspec=nspec, nreac=nreac, inlet_MFs=Y_in[:, j], T=Temp[j], P_total=P_total[j])
-            push!(rbs_snapshot, B_RBS)
-        else
-            B_RBS = 0.0
-        end
+        single_snapshot_A[j] = A
+        single_snapshot_B[j] = B
+        rbs_snapshot[j] = B_RBS_j
+        B_RBS = B_RBS_j
     end
+
+    @info "Offline step done, $(length(OFFLINE_CACHE) - cached_before) design points newly computed, $(Nexps - (length(OFFLINE_CACHE) - cached_before)) reused"
     if RBS_full == true
         @info "Estimating Parameters using RBS"
         k, _ = newton_optimizer(single_snapshot_A, single_snapshot_B, Y_in, Y_out; Mw_avg=mixture_mw, mixture_density=mixture_density, Initial_Guess=IG, molar_weights=molar_weights, B_RBS=rbs_snapshot, st=St, cov=V, dof=unknown_parameters, RBS=true, print=true, lm=true, T=Temp, Nexps=Nexps, N_measurements=N_repeats)

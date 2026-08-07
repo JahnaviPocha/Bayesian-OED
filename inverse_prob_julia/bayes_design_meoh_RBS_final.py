@@ -155,6 +155,13 @@ if ADD_TIMESTAMP_TO_RESULTS_FOLDER:
 RESULTS_DIR = PROJECT_DIR / "results" / folder_name
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
+# State is written here after every BO iteration rather than only at the end,
+# so a run that is killed or still going can still be inspected. Read it with
+# tools/snapshot_progress.py.
+PROGRESS_DIR = RESULTS_DIR / "progress"
+PROGRESS_DIR.mkdir(parents=True, exist_ok=True)
+
+
 SAVE_PLOTS = True
 SHOW_PLOTS = False
 PRINT_ESTIMATOR_SHAPES = True
@@ -508,6 +515,34 @@ def check_parameter_convergence(param_history, tol=1e-3):
 
 
     
+
+def save_progress(noise_level, X, y, Y_full, param_history, param_exp_counts):
+    """
+    Write this noise level's state after every BO iteration.
+
+    Everything else is written only once the loop finishes, so a run that hits
+    the wall clock leaves nothing behind. The noise levels are separate
+    processes and each owns one file, so no locking is needed.
+
+    The temporary name ends in .npz because savez_compressed appends .npz to
+    anything that does not, which would leave the rename below with no file to
+    find. The rename itself is atomic, so a reader never sees a partial write.
+    """
+    path = PROGRESS_DIR / f"noise_{noise_level:.0e}.npz".replace("-", "m")
+    tmp = path.with_name(path.stem + ".tmp.npz")
+
+    np.savez_compressed(
+        tmp,
+        noise=noise_level,
+        X=np.asarray(X, dtype=float),
+        y=np.asarray(y, dtype=float),
+        Y_full=np.asarray(Y_full, dtype=float),
+        params=np.asarray(param_history, dtype=float),
+        param_exp_counts=np.asarray(param_exp_counts, dtype=int),
+    )
+    tmp.replace(path)
+
+
 def bayesian_optimization(
     noise_level,
     N_init=N_INIT,
@@ -609,6 +644,9 @@ def bayesian_optimization(
         param_exp_counts.append(len(X))
 
         print(f"Estimated parameters: {params}")
+
+        save_progress(noise_level, X, y, Y_full, param_history, param_exp_counts)
+        print(f"Progress saved at {len(X)} experiments.")
 
         # Stop if we reached max experiments
         if len(X) >= max_experiments:
