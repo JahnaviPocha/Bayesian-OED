@@ -52,5 +52,5 @@ NOISE=${NOISE_LEVELS[$SLURM_ARRAY_TASK_ID]}
 echo "array task $SLURM_ARRAY_TASK_ID -> noise $NOISE"
 
 "/net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia/.venv/bin/python" \
-    "/net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia/bayes_design_meoh_RBS.py" \
+    "/net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia/bayes_design_meoh_RBS_split.py" \
     --noise "$NOISE"

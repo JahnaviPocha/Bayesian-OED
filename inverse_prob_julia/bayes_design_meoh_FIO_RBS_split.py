@@ -5,6 +5,7 @@ Created on Sat Jul 25 20:30:59 2026
 @author: jahna
 """
 
+import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing as mp
 
@@ -167,15 +168,40 @@ NREF_ESTIMATION = 2500
 PROJECT_DIR = Path(__file__).resolve().parent
 
 RESULTS_FOLDER_NAME = "bayes_design_meoh_FIO_RBS"
-ADD_TIMESTAMP_TO_RESULTS_FOLDER = False
+# Suffixed so a rerun cannot overwrite results already on disk.
+ADD_TIMESTAMP_TO_RESULTS_FOLDER = True
+
+
+def run_tag():
+    """
+    A suffix that every process of one run agrees on.
+
+    A timestamp cannot be used directly: the noise levels are spawned, so each
+    worker re-imports this module and would stamp its own folder, scattering
+    one run across several. The SLURM id is identical in parent and children.
+    SLURM_ARRAY_JOB_ID is preferred so that array tasks splitting the noise
+    levels share a single folder; the timestamp is only a fallback for runs
+    started outside SLURM.
+    """
+    return (
+        os.environ.get("SLURM_ARRAY_JOB_ID")
+        or os.environ.get("SLURM_JOB_ID")
+        or datetime.now().strftime("%Y%m%d_%H%M%S")
+    )
+
 
 folder_name = RESULTS_FOLDER_NAME
 if ADD_TIMESTAMP_TO_RESULTS_FOLDER:
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    folder_name = f"{RESULTS_FOLDER_NAME}_{stamp}"
+    folder_name = f"{RESULTS_FOLDER_NAME}_{run_tag()}"
 
 RESULTS_DIR = PROJECT_DIR / "results" / folder_name
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+# State is written here after every BO iteration rather than only at the end,
+# so a run that is killed or still going can still be inspected. Read it with
+# tools/snapshot_progress.py.
+PROGRESS_DIR = RESULTS_DIR / "progress"
+PROGRESS_DIR.mkdir(parents=True, exist_ok=True)
 
 SAVE_PLOTS = True
 SHOW_PLOTS = False
@@ -643,6 +669,43 @@ def check_parameter_convergence(param_history, tol=1e-3):
     return delta < tol
 
 
+def save_progress(noise_level, X, y_info, y_methanol, Y_full, F_matrices,
+                  param_history, param_exp_counts, total_info_history):
+    """
+    Write this noise level's state after every BO iteration.
+
+    Everything else here is written only once the loop finishes, so a run that
+    hits the wall clock leaves nothing behind. The three noise levels run as
+    separate processes and each owns one file, so no locking is needed.
+
+    Written to a temporary name and renamed, because a reader may look at the
+    file at any moment and rename is atomic; a plain write would expose a
+    half-written array.
+
+    The chosen designs are stored here too. They are never printed, so before
+    this the log could not tell you which experiments the FIO criterion picked.
+    """
+    path = PROGRESS_DIR / f"noise_{noise_level:.0e}.npz".replace("-", "m")
+    # The temporary name has to end in .npz too: savez_compressed appends .npz
+    # to anything that does not, so a "<name>.npz.tmp" target would silently be
+    # written as "<name>.npz.tmp.npz" and the rename below would not find it.
+    tmp = path.with_name(path.stem + ".tmp.npz")
+
+    np.savez_compressed(
+        tmp,
+        noise=noise_level,
+        X=np.asarray(X, dtype=float),
+        y=np.asarray(y_methanol, dtype=float),
+        point_information=np.asarray(y_info, dtype=float),
+        Y_full=np.asarray(Y_full, dtype=float),
+        F_matrices=np.asarray(F_matrices, dtype=float),
+        params=np.asarray(param_history, dtype=float),
+        param_exp_counts=np.asarray(param_exp_counts, dtype=int),
+        total_info_history=np.asarray(total_info_history, dtype=float),
+    )
+    tmp.replace(path)
+
+
 def BO(
     noise_level,
     N_init=N_INIT,
@@ -776,6 +839,10 @@ def BO(
         print(f"Evaluated {len(X_batch)} candidates this iteration")
         print(f"Cumulative information = {total_info_history[-1]:.6f}")
         print("Estimated physical parameters =", params_physical)
+
+        save_progress(noise_level, X, y_info, y_methanol, Y_full, F_matrices,
+                      param_history, param_exp_counts, total_info_history)
+        print(f"Progress saved at {len(X)} experiments.")
 
         if allow_early_stop and check_parameter_convergence(param_history, tol):
             print("\nConvergence reached -> stopping early.")
@@ -1499,11 +1566,34 @@ def plot_methanol_outputs(results):
 
 if __name__ == "__main__":
     mp.freeze_support()
+
+    parser = argparse.ArgumentParser(description="Methanol FIO RBS Bayesian OED")
+    parser.add_argument(
+        "--noise",
+        type=float,
+        default=None,
+        help="run only this noise level, for one SLURM job per noise level. "
+             "Each fit then gets the whole allocation's threads instead of a "
+             "third of it, and the Julia estimator threads over Nexps.",
+    )
+    args = parser.parse_args()
+
+    noise_levels = NOISE_LEVELS if args.noise is None else [args.noise]
+
+    # One job per noise level shares the run folder through SLURM_ARRAY_JOB_ID
+    # but must not share output filenames, so each writes its own subfolder.
+    # The progress files stay in the common PROGRESS_DIR, one per noise level,
+    # which is what tools/snapshot_progress.py reads to compare them.
+    if args.noise is not None:
+        RESULTS_DIR = RESULTS_DIR / f"noise_{args.noise:.0e}".replace("-", "m")
+
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     print(f"\nSaving all outputs to: {RESULTS_DIR}\n")
+    if args.noise is not None:
+        print(f"Single noise level: {args.noise:.0e}\n")
 
-    if RUN_NOISES_IN_PARALLEL:
+    if RUN_NOISES_IN_PARALLEL and len(noise_levels) > 1:
         results = {}
         ctx = mp.get_context("spawn")
 
@@ -1513,7 +1603,7 @@ if __name__ == "__main__":
         ) as executor:
             future_to_noise = {
                 executor.submit(run_noise_worker, noise): noise
-                for noise in NOISE_LEVELS
+                for noise in noise_levels
             }
 
             for future in as_completed(future_to_noise):
@@ -1524,7 +1614,7 @@ if __name__ == "__main__":
 
         results = {noise: results[noise] for noise in NOISE_LEVELS}
     else:
-        results = run_noise_study()
+        results = dict(run_noise_worker(noise) for noise in noise_levels)
 
     export_all_outputs(results)
 
