@@ -153,7 +153,10 @@ def denormalize_parameter_vector(params_normalized):
 
 
 TRUE_PARAMS_NORMALIZED = normalize_parameter_vector(TRUE_PARAMS)
-INITIAL_GUESS_NORMALIZED = TRUE_PARAMS_NORMALIZED * 0.5
+# Flat 0.1 in normalized space, matching the Bayesian OED scripts. Deriving
+# the guess from TRUE_PARAMS_NORMALIZED started the estimator half way to
+# the answer and moved the starting point with the truth.
+INITIAL_GUESS_NORMALIZED = np.full(N_UNKNOWN_PARAMETERS, 0.1)
 INITIAL_GUESS_PHYSICAL = denormalize_parameter_vector(INITIAL_GUESS_NORMALIZED)
 
 

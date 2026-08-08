@@ -472,7 +472,12 @@ function complete_workflow(; scale=1.0, Nexps=25, ratio=0.1, nparas=9, std_data=
     lower=[0.1,0.1,0.1,0.1,0.1,1e4,1e4,1e4,1e4] 
     upper=[1e5, 1e4, 1e5, 1e5, 1e5, 1.5e5, 1.5e5, 1.5e5, 1.5e5]
     Par =  (log10.(Par) .- log10.(lower)) ./ (log10.(upper) .- log10.(lower))
-    IG = Par * 0.5 
+    # A flat 0.1 in normalized space, matching the Bayesian OED scripts. The
+    # previous IG = Par * 0.5 was derived from the true parameters, so the
+    # estimator started half way to the answer along every coordinate and the
+    # starting point moved with the truth. A fixed guess is independent of what
+    # is being recovered.
+    IG = fill(0.1, nparas)
     Y_in, Temp, P_total = random_points_generator(Nexps=Nexps, nspecs=nspec, lb = [0.1, 0.1, 0.0, 0.0, 0.0, 450, 15], ub = [0.33, 0.25, 0.01, 0.01, 0.3, 550, 50], Sampling=HaltonSample())
     Y_out = experiments(; scale=scale, Y_in=Y_in, P_total=P_total, Temp=Temp, Nexps=Nexps, ratio=ratio, N_repeats=50, std_data=std_data, Nspec=nspec) #
     k = parameter_estimator(; scale=scale, ratio=ratio, nspec=nspec, Y_in=Y_in, Temp=Temp, P_total=P_total, St=St, nref=2500, nreac=nreac, Nexps=Nexps, Y_out=Y_out, unknown_parameters=nparas, IG=IG, N_repeats=50, σ_data=std_data, RBS_full=RBS_full)
