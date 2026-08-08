@@ -79,6 +79,13 @@ if ADD_TIMESTAMP_TO_RESULTS_FOLDER:
 RESULTS_DIR = PROJECT_DIR / "results" / folder_name
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
+# State is written here after every estimation rather than only at the end, so
+# a run that is killed or still going can still be inspected. Read it with
+# tools/snapshot_progress.py.
+PROGRESS_DIR = RESULTS_DIR / "progress"
+PROGRESS_DIR.mkdir(parents=True, exist_ok=True)
+
+
 SAVE_PLOTS = True
 SHOW_PLOTS = False
 
@@ -345,6 +352,34 @@ def estimate_parameters(X, Y_full, noise_level, initial_guess=None):
 # RANDOM STUDY
 # ============================================================
 
+
+def save_progress(noise_level, X, y, Y_full, param_history, param_exp_counts):
+    """
+    Write this noise level's state after every estimation.
+
+    Everything else is written only once the sweep finishes, so a run that hits
+    the wall clock leaves nothing behind. The noise levels are separate
+    processes and each owns one file, so no locking is needed.
+
+    The temporary name ends in .npz because savez_compressed appends .npz to
+    anything that does not, which would leave the rename with no file to find.
+    The rename is atomic, so a reader never sees a partial write.
+    """
+    path = PROGRESS_DIR / f"noise_{noise_level:.0e}.npz".replace("-", "m")
+    tmp = path.with_name(path.stem + ".tmp.npz")
+
+    np.savez_compressed(
+        tmp,
+        noise=noise_level,
+        X=np.asarray(X, dtype=float),
+        y=np.asarray(y, dtype=float),
+        Y_full=np.asarray(Y_full, dtype=float),
+        params=np.asarray(param_history, dtype=float),
+        param_exp_counts=np.asarray(param_exp_counts, dtype=int),
+    )
+    tmp.replace(path)
+
+
 def random_design_study(noise_level, X_design):
     print("\n=== METHANOL RANDOM DESIGN STUDY ===")
     print(f"Noise level: {noise_level:.0e}")
@@ -391,6 +426,8 @@ def random_design_study(noise_level, X_design):
                 param_history.append(params)
                 param_exp_counts.append(exp_number)
                 print(f"Estimated physical parameters = {params}")
+                save_progress(noise_level, X_used, y_list, Y_full,
+                              param_history, param_exp_counts)
 
     return {
         "noise": noise_level,
