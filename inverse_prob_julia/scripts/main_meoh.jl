@@ -301,10 +301,27 @@ function experiments(; scale, Y_in, Temp, P_total, Nexps, ratio, N_repeats, std_
     St_Methanol = [-1 -3 1 1 0 0; -1 -1 1 0 1 0]
     St = St_Methanol
     P_total = P_total
-    PreExp = [1.07, 3453.38, 0.499, 6.62e-11, 1.22e10, 40000, 17197, 124119, -98084]
-    lower = [1e-2, 1e0, 1e-4, 1e-12, 1e7, 1e1, 1e1, 1e2, -2e5]
-    upper = [1e2, 1e4, 1e2, 1e-8, 1e11, 1e5, 1e5, 1e6, -2e1]
-    PreExp = (PreExp .- lower) ./ (upper .- lower)
+    # The parameters and the scaling must match what rf() expects, because the
+    # normalized vector built here is handed straight to main(k0=...) and rf is
+    # what de-normalizes it. rf uses a log10 map over these bounds, as does
+    # complete_workflow, so this is the model's one parameterization.
+    #
+    # This previously normalized a different vector, linearly, over a different
+    # set of bounds:
+    #   PreExp = [1.07, 3453.38, 0.499, 6.62e-11, 1.22e10, 40000, 17197, 124119, -98084]
+    #   lower  = [1e-2, 1e0, 1e-4, 1e-12, 1e7, 1e1, 1e1, 1e2, -2e5]
+    #   upper  = [1e2, 1e4, 1e2, 1e-8, 1e11, 1e5, 1e5, 1e6, -2e1]
+    #   PreExp = (PreExp .- lower) ./ (upper .- lower)
+    # rf then read that linearly-scaled vector through its log10 map, so the
+    # data was generated at parameters that were neither vector: p1 came out as
+    # 0.1158 rather than 15672.02, p5 as 0.5389 rather than 0.7439. The
+    # estimator recovered those effective values to within 0.1%, which is why
+    # every study looked stuck near its lower bound and why the error was
+    # identical at every noise level.
+    PreExp = [15672.02, 3453.38, 30.836, 558.532, 0.7439, 40000, 17197, 124119, 98084]
+    lower = [0.1, 0.1, 0.1, 0.1, 0.1, 1e4, 1e4, 1e4, 1e4]
+    upper = [1e5, 1e4, 1e5, 1e5, 1e5, 1.5e5, 1.5e5, 1.5e5, 1.5e5]
+    PreExp = (log10.(PreExp) .- log10.(lower)) ./ (log10.(upper) .- log10.(lower))
     molar_weights = [44.01, 2.016, 18.01528, 32.04, 28.01, 28.0134]
     mixture_density = zeros(Nexps)
     Yexp = zeros(Nspec, Nexps)
