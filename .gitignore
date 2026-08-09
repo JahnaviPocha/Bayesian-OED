@@ -12,5 +12,8 @@ __pycache__/
 *.pyc
 # SLURM job output logs
 inverse_prob_julia/slurm_logs/
+# SLURM submission scripts: node counts, partitions and wall times are tuned
+# to whatever this cluster has free, so they are local rather than shared.
+inverse_prob_julia/slurm_jobs/
 # Generated results
 inverse_prob_julia/results/
