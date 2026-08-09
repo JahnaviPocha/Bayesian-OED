@@ -1,0 +1,102 @@
+===== METHANOL FIO NOISE SWEEP SUMMARY =====
+
+Results folder: /net/work/qureshi/mycode/Bayesian-OED/inverse_prob_julia/results/bayes_design_meoh_FIO_asymptotic_final
+Noise levels: 1e-05, 1e-06, 1e-07
+N_INIT: 10
+MAX_EXPERIMENTS: 150
+N_CANDIDATES: 200
+BO_BATCH_SIZE: 4
+CANDIDATES_IN_PARALLEL: True
+MAX_CANDIDATE_WORKERS: 4
+N_REPEATS: 10
+RBS_FULL: False
+
+============================================================
+===== FINAL RESULTS SUMMARY =====
+
+noise sigma = 1e-05
+Total experiments used: 150
+RMS relative parameter error = 2.191522e+00
+
+Final physical parameters:
+  p1: 9.862686e+04 true=1.567202e+04 rel_error=+5.293e+00
+  p2: 9.885450e+03 true=3.453380e+03 rel_error=+1.863e+00
+  p3: 9.088154e+01 true=3.083600e+01 rel_error=+1.947e+00
+  p4: 3.157831e+02 true=5.585320e+02 rel_error=-4.346e-01
+  p5: 1.000016e-01 true=7.439000e-01 rel_error=-8.656e-01
+  p6: 1.430648e+05 true=4.000000e+04 rel_error=+2.577e+00
+  p7: 2.701780e+04 true=1.719700e+04 rel_error=+5.711e-01
+  p8: 1.495938e+05 true=1.241190e+05 rel_error=+2.052e-01
+  p9: 1.010790e+05 true=9.808400e+04 rel_error=+3.053e-02
+
+Best pointwise-information experiment:
+  X = [2.41860170e-01 2.40086650e-01 8.24075795e-03 2.75979494e-03
+ 2.93007163e-01 5.34100306e+02 4.89474272e+01]
+  Point information = 16.378924
+
+Best methanol-output experiment:
+  X = [1.95295242e-01 1.48501192e-01 2.52179084e-03 9.89394463e-03
+ 2.71647774e-01 5.36232171e+02 2.89551538e+01]
+  Methanol = 0.010810
+
+Final cumulative information = 64.150595
+
+============================================================
+===== FINAL RESULTS SUMMARY =====
+
+noise sigma = 1e-06
+Total experiments used: 150
+RMS relative parameter error = 2.790704e+00
+
+Final physical parameters:
+  p1: 9.862738e+04 true=1.567202e+04 rel_error=+5.293e+00
+  p2: 9.885459e+03 true=3.453380e+03 rel_error=+1.863e+00
+  p3: 1.636406e+02 true=3.083600e+01 rel_error=+4.307e+00
+  p4: 6.552291e+01 true=5.585320e+02 rel_error=-8.827e-01
+  p5: 1.000015e-01 true=7.439000e-01 rel_error=-8.656e-01
+  p6: 1.495930e+05 true=4.000000e+04 rel_error=+2.740e+00
+  p7: 7.272493e+04 true=1.719700e+04 rel_error=+3.229e+00
+  p8: 2.853486e+04 true=1.241190e+05 rel_error=-7.701e-01
+  p9: 1.029565e+05 true=9.808400e+04 rel_error=+4.968e-02
+
+Best pointwise-information experiment:
+  X = [2.41860170e-01 2.40086650e-01 8.24075795e-03 2.75979494e-03
+ 2.93007163e-01 5.34100306e+02 4.89474272e+01]
+  Point information = 20.992048
+
+Best methanol-output experiment:
+  X = [2.34302036e-01 2.43756004e-01 1.03615654e-03 9.87486664e-03
+ 2.94044223e-01 5.47299382e+02 3.05706778e+01]
+  Methanol = 0.011068
+
+Final cumulative information = 85.000190
+
+============================================================
+===== FINAL RESULTS SUMMARY =====
+
+noise sigma = 1e-07
+Total experiments used: 150
+RMS relative parameter error = 1.416260e+00
+
+Final physical parameters:
+  p1: 4.413901e+04 true=1.567202e+04 rel_error=+1.816e+00
+  p2: 9.885442e+03 true=3.453380e+03 rel_error=+1.863e+00
+  p3: 7.907933e+01 true=3.083600e+01 rel_error=+1.565e+00
+  p4: 2.009500e+02 true=5.585320e+02 rel_error=-6.402e-01
+  p5: 1.000023e-01 true=7.439000e-01 rel_error=-8.656e-01
+  p6: 1.429756e+05 true=4.000000e+04 rel_error=+2.574e+00
+  p7: 3.442091e+04 true=1.719700e+04 rel_error=+1.002e+00
+  p8: 1.495937e+05 true=1.241190e+05 rel_error=+2.052e-01
+  p9: 1.044079e+05 true=9.808400e+04 rel_error=+6.447e-02
+
+Best pointwise-information experiment:
+  X = [3.22282018e-01 2.31941834e-01 1.83069001e-03 3.89712414e-03
+ 8.00483121e-03 5.20189267e+02 3.12276497e+01]
+  Point information = 26.560834
+
+Best methanol-output experiment:
+  X = [2.97233427e-01 1.98505235e-01 9.21439419e-03 9.97512378e-03
+ 1.54054644e-01 5.37296635e+02 4.96719954e+01]
+  Methanol = 0.011019
+
+Final cumulative information = 105.947984
